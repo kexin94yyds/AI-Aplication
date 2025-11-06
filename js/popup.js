@@ -1,8 +1,15 @@
 // 公共认证检查函数 - 减少重复代码
+// 在 Electron 环境中，我们通过 webview 加载站点并在其中完成登录，
+// 因此无需在渲染层提前做跨域的会话检查。
+const IS_ELECTRON = !!(typeof window !== 'undefined' && window.electronAPI && window.electronAPI.isElectron);
 const AuthCheckers = {
   // ChatGPT通用认证检查
   chatgptAuth: async (baseUrl = 'https://chatgpt.com') => {
     try {
+      // Electron 环境下直接允许渲染，让用户在右侧 webview 内登录
+      if (IS_ELECTRON) {
+        return { state: 'authorized' };
+      }
       const res = await fetch(`${baseUrl}/api/auth/session`);
       if (res.status === 403) {
         return {
@@ -187,12 +194,13 @@ const setOverride = async (key, patch) => {
     chrome.storage?.local.set({ aiProviderOverrides: all });
   } catch (_) {}
 };
-// Build effective provider config with overrides, but enforce webview for Perplexity
+// Build effective provider config with overrides.
+// 在 Electron 下默认使用 webview 以绕过站点的 X-Frame-Options / CSP 限制。
 const effectiveConfig = (baseMap, key, overrides) => {
   const base = (baseMap && baseMap[key]) || PROVIDERS[key];
   const ovr = (overrides && overrides[key]) || {};
   const merged = { ...(base || {}), ...(ovr || {}) };
-  if (key === 'perplexity') merged.useWebview = false;
+  if (IS_ELECTRON) merged.useWebview = true;
   return merged;
 };
 const clearOverride = async (key) => {
@@ -1050,6 +1058,46 @@ const showOnlyFrame = (container, key) => {
 let __suppressNextFrameFocus = false; // when true, do not focus iframe/webview on switch (e.g., Tab cycling)
 
 const ensureFrame = async (container, key, provider) => {
+  // 在 Electron BrowserView 模式下，我们不需要创建 iframe/webview
+  // 而是通过 IPC 通知主进程切换 BrowserView
+  if (IS_ELECTRON) {
+    dbg('ensureFrame (Electron BrowserView mode):', key);
+    
+    // 通知主进程切换到这个 provider
+    if (window.electronAPI && window.electronAPI.switchProvider) {
+      window.electronAPI.switchProvider(key);
+    }
+    
+    // 更新 Open in Tab 按钮
+    try {
+      const openInTab = document.getElementById('openInTab');
+      if (openInTab) {
+        // 从主进程获取当前 URL
+        if (window.electronAPI && window.electronAPI.getCurrentUrl) {
+          window.electronAPI.getCurrentUrl().then(url => {
+            if (url) {
+              openInTab.dataset.url = url;
+              openInTab.title = url;
+            } else {
+              openInTab.dataset.url = provider.baseUrl || provider.iframeUrl;
+              openInTab.title = provider.baseUrl || provider.iframeUrl;
+            }
+          });
+        } else {
+          openInTab.dataset.url = provider.baseUrl || provider.iframeUrl;
+          openInTab.title = provider.baseUrl || provider.iframeUrl;
+        }
+      }
+    } catch (_) {}
+    
+    // 隐藏消息覆盖层
+    const msg = document.getElementById('provider-msg');
+    if (msg) msg.style.display = 'none';
+    
+    return;
+  }
+  
+  // 原有的 iframe/webview 逻辑（非 Electron 环境）
   if (!cachedFrames[key]) {
     const useWebview = !!provider.useWebview;
     const tag = useWebview ? 'webview' : 'iframe';
@@ -1947,6 +1995,44 @@ try {
     }
   } catch (_) {}
 });
+
+// 在 Electron BrowserView 模式下，监听 URL 变化
+if (IS_ELECTRON && window.electronAPI && window.electronAPI.onBrowserViewUrlChanged) {
+  window.electronAPI.onBrowserViewUrlChanged((data) => {
+    const { providerKey, url, title } = data;
+    dbg('BrowserView URL changed:', providerKey, url, title);
+    
+    // 更新 URL 缓存
+    if (url) {
+      currentUrlByProvider[providerKey] = url;
+      saveProviderUrl(providerKey, url);
+    }
+    
+    // 更新标题缓存
+    if (title) {
+      currentTitleByProvider[providerKey] = title;
+    }
+    
+    // 如果是当前激活的 provider，更新 Open in Tab 按钮
+    getProvider().then(currentProvider => {
+      if (currentProvider === providerKey) {
+        const openInTab = document.getElementById('openInTab');
+        if (openInTab && url) {
+          openInTab.dataset.url = url;
+          openInTab.title = url;
+        }
+        
+        // 更新 Star 按钮状态
+        updateStarButtonState();
+        
+        // 自动保存深链接到历史记录
+        if (isDeepLink(providerKey, url)) {
+          addHistory({ url, provider: providerKey, title: title || '' });
+        }
+      }
+    });
+  });
+}
 
 initializeBar();
 

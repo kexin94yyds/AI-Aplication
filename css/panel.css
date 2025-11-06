@@ -44,6 +44,7 @@ html {
   flex-direction: row; /* 水平排列 */
   height: 100vh;
   width: 100vw; /* 让侧边栏页面占满可用宽度 */
+  -webkit-app-region: no-drag; /* 默认不可拖动 */
 }
 
 /* 右侧主内容区 */
@@ -57,19 +58,32 @@ html {
   flex-direction: column;
 }
 
+/* 拖动区域 - 覆盖整个顶部，让所有空白处都能拖动 */
+.drag-zone {
+  position: absolute;
+  top: 0;
+  left: 60px; /* 为左侧侧边栏留出空间 */
+  right: 0;
+  height: 80px; /* 更大的拖动区域 */
+  -webkit-app-region: drag; /* 允许拖动 */
+  z-index: 1; /* 最底层 */
+  cursor: move;
+}
+
 .hover-zone {
   position: absolute;
   top: 0;
-  left: 0;
+  left: 60px; /* 为左侧侧边栏留出空间 */
   right: 0;
-  height: 10px;
-  z-index: 100001;
+  height: 80px; /* 和拖动区域一样高 */
+  z-index: 10; /* 在拖动区域之上，但在工具栏之下 */
+  pointer-events: none; /* 不拦截事件，让拖动生效 */
 }
 
 .toolbar {
   position: absolute;
   top: 8px;
-  left: 8px;
+  left: 68px; /* 为左侧侧边栏留出空间 */
   right: 8px;
   height: 40px;
   display: flex;
@@ -83,7 +97,8 @@ html {
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
-  z-index: 100000;
+  z-index: 100; /* 在拖动区域之上 */
+  -webkit-app-region: drag; /* 工具栏背景也可拖动 */
   /* Hidden by default; reveal on hover */
   opacity: 0;
   transform: translateY(-8px);
@@ -286,6 +301,8 @@ html {
   overflow: hidden;
   text-overflow: ellipsis;
   transition: all 0.2s ease;
+  -webkit-app-region: no-drag; /* 按钮本身不可拖动，但可点击 */
+  pointer-events: auto; /* 确保按钮可以接收点击事件 */
 }
 .toolbar button:hover {
   background: #f8fafc;
@@ -503,7 +520,8 @@ html {
 .toolbar:hover {
   opacity: 1;
   transform: translateY(0);
-  pointer-events: auto;
+  pointer-events: auto; /* 显示时允许按钮点击 */
+  -webkit-app-region: drag; /* 工具栏背景仍然可拖动 */
 }
 
 /* toolbar buttons removed */
@@ -523,7 +541,8 @@ html {
   animation: fadeIn 0.5s ease-out forwards;
 }
 
-/* 确保实际嵌入的 iframe/webview 也完全铺满 */
+/* 在 Electron BrowserView 模式下，#iframe 只是一个占位容器，实际内容在 BrowserView 中 */
+/* 确保实际嵌入的 iframe/webview 也完全铺满（兼容非 Electron 环境） */
 #iframe iframe,
 #iframe webview {
   display: block;
@@ -565,9 +584,10 @@ html {
   border-right: 1px solid #e0e0e0; /* 右边框 */
   overflow-y: auto; /* 垂直滚动 */
   overflow-x: visible; /* 允许折叠/展开按钮放在最左侧 */
-  z-index: 100000;
+  z-index: 100004; /* 提高层级，确保在拖动区域之上 */
   flex-shrink: 0;
   transition: width 0.18s ease, padding 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  -webkit-app-region: no-drag; /* 确保侧边栏可点击 */
 }
 
 /* 顶部折叠头部（展开时置顶不遮挡图标） */
@@ -601,6 +621,9 @@ html {
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  position: relative;
+  z-index: 2; /* 确保折叠按钮始终可点击 */
+  -webkit-app-region: no-drag; /* 确保可点击 */
 }
 #provider-tabs .tabs-toggle:hover { color: #111827; border-color: #cbd5e1; }
 
@@ -625,6 +648,8 @@ html {
   justify-content: center;
   opacity: 0.6;
   position: relative;
+  z-index: 1; /* 确保按钮在容器内可见 */
+  -webkit-app-region: no-drag; /* 确保按钮可点击 */
 }
 
 #provider-tabs button:hover {
@@ -694,15 +719,26 @@ html {
   font-size: 12px;
 }
 
-/* When the left nav is collapsed, leave space for the floating toggle
-   so the top toolbar (Open in Tab) does not overlap it. */
-#provider-tabs.collapsed + #main-content .toolbar {
-  left: 48px; /* slightly more room to avoid visual overlap */
+/* When the left nav is collapsed, adjust drag zone and toolbar */
+#provider-tabs.collapsed + #main-content .drag-zone {
+  left: 30px; /* 留出空间给折叠按钮 */
 }
 
-/* Ensure the toggle remains clickable above the toolbar when collapsed */
+#provider-tabs.collapsed + #main-content .hover-zone {
+  left: 30px; /* 留出空间给折叠按钮 */
+}
+
+#provider-tabs.collapsed + #main-content .toolbar {
+  left: 38px; /* 调整工具栏位置 */
+}
+
+/* Ensure the toggle remains clickable above everything */
 #provider-tabs.collapsed .tabs-header {
-  z-index: 100002;
+  z-index: 1000000; /* 确保在所有元素之上 */
+}
+
+#provider-tabs.collapsed .tabs-toggle {
+  z-index: 1000001; /* 确保按钮本身在最上面 */
 }
 
 /* Keyboard Shortcuts Settings Modal */

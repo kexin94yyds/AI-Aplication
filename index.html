@@ -15,6 +15,8 @@
 
     <!-- 右侧主内容区 -->
     <main id="main-content">
+      <!-- 拖动区域 - 用于移动窗口 -->
+      <div class="drag-zone"></div>
       <div class="hover-zone"></div>
       <div class="toolbar">
         <button id="starBtn" type="button" title="Star/Unstar current page">☆</button>
@@ -44,6 +46,8 @@
       </div>
       <div id="iframe"></div>
     </main>
+    <!-- Electron 适配器 - 必须在其他脚本之前加载 -->
+    <script src="electron-adapter.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/history-db.js"></script>
     <script src="js/popup.js"></script>
