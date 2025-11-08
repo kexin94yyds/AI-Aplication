@@ -584,14 +584,20 @@ async function renderHistoryPanel() {
               await ensureFrame(container, providerKey, p);
             }
             
-            // Navigate the frame to the URL
-            const frame = cachedFrames[providerKey];
-            if (frame && frame.contentWindow) {
-              try {
-                frame.contentWindow.location.href = url;
-              } catch (err) {
-                // Fallback: reload frame with new URL
-                frame.src = url;
+            // Navigate to the URL
+            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
+              // Electron: use IPC to navigate BrowserView
+              window.electronAPI.switchProvider({ key: providerKey, url: url });
+            } else {
+              // Browser extension: navigate iframe
+              const frame = cachedFrames[providerKey];
+              if (frame && frame.contentWindow) {
+                try {
+                  frame.contentWindow.location.href = url;
+                } catch (err) {
+                  // Fallback: reload frame with new URL
+                  frame.src = url;
+                }
               }
             }
             
@@ -936,14 +942,20 @@ async function renderFavoritesPanel() {
               await ensureFrame(container, providerKey, p);
             }
             
-            // Navigate the frame to the URL
-            const frame = cachedFrames[providerKey];
-            if (frame && frame.contentWindow) {
-              try {
-                frame.contentWindow.location.href = url;
-              } catch (err) {
-                // Fallback: reload frame with new URL
-                frame.src = url;
+            // Navigate to the URL
+            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
+              // Electron: use IPC to navigate BrowserView
+              window.electronAPI.switchProvider({ key: providerKey, url: url });
+            } else {
+              // Browser extension: navigate iframe
+              const frame = cachedFrames[providerKey];
+              if (frame && frame.contentWindow) {
+                try {
+                  frame.contentWindow.location.href = url;
+                } catch (err) {
+                  // Fallback: reload frame with new URL
+                  frame.src = url;
+                }
               }
             }
             
@@ -1468,6 +1480,43 @@ const initializeBar = async () => {
   // 初始化星号按钮状态（移除 Open in Tab 后依旧可用）
   await updateStarButtonState();
 
+  // Open in Tab 按钮点击事件
+  try {
+    const openInTabBtn = document.getElementById('openInTab');
+    if (openInTabBtn) {
+      // 设置初始快捷键提示
+      getButtonShortcuts().then(shortcuts => {
+        const sc = shortcuts.openInTab;
+        const keys = [];
+        if (sc.ctrl) keys.push('Ctrl');
+        if (sc.shift) keys.push('Shift');
+        if (sc.alt) keys.push('Alt');
+        keys.push(sc.key.toUpperCase());
+        openInTabBtn.title = `Open in Chrome (${keys.join('+')})`;
+      });
+      
+      openInTabBtn.addEventListener('click', async () => {
+        try {
+          const url = await getCurrentDisplayedUrl();
+          if (!url || url === '#') {
+            console.warn('No URL available to open');
+            return;
+          }
+          
+          // 在 Electron 环境中使用 IPC 在 Chrome 中打开
+          if (IS_ELECTRON && window.electronAPI?.openInBrowser) {
+            window.electronAPI.openInBrowser(url);
+          } else {
+            // 浏览器环境：在新标签页中打开
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }
+        } catch (err) {
+          console.error('Error opening URL in tab:', err);
+        }
+      });
+    }
+  } catch (_) {}
+
   // 全宽按钮与双击顶部切换（Electron 专用）
   try {
     const fullBtn = document.getElementById('fullscreenBtn');
@@ -1785,16 +1834,22 @@ const initializeBar = async () => {
                 await setButtonShortcuts(updated);
                 __buttonShortcuts = updated; // 更新全局缓存
                 
-                // 如果是搜索按钮，更新其title
+                // 更新按钮的 title
+                const keys = [];
+                if (newShortcut.ctrl) keys.push('Ctrl');
+                if (newShortcut.shift) keys.push('Shift');
+                if (newShortcut.alt) keys.push('Alt');
+                keys.push(newShortcut.key.toUpperCase());
+                
                 if (shortcutId === 'searchBtn') {
                   const searchBtn = document.getElementById('searchBtn');
                   if (searchBtn) {
-                    const keys = [];
-                    if (newShortcut.ctrl) keys.push('Ctrl');
-                    if (newShortcut.shift) keys.push('Shift');
-                    if (newShortcut.alt) keys.push('Alt');
-                    keys.push(newShortcut.key.toUpperCase());
                     searchBtn.title = `Search in page (${keys.join('+')})`;
+                  }
+                } else if (shortcutId === 'openInTab') {
+                  const openInTabBtn = document.getElementById('openInTab');
+                  if (openInTabBtn) {
+                    openInTabBtn.title = `Open in Chrome (${keys.join('+')})`;
                   }
                 }
               }

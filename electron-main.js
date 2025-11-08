@@ -14,6 +14,9 @@ let isFullWidth = false;
 let restoreBounds = null; // 记录进入全宽之前的窗口尺寸
 // 顶部 UI 占用的预留空间（像素）
 let topInset = 50; // 基础工具栏高度
+// 记住窗口位置（参考 RI 项目）
+let lastWindowPosition = null; // 存储上次窗口位置 { x, y }
+let lastShowAt = 0; // 记录最近一次显示时间，用于忽略刚显示时的 blur
 
 // ============== 与插件数据同步（JSON 文件） ==============
 const DEFAULT_SYNC_DIR = '/Users/apple/AI-sidebar 更新/AI-Sidebar';
@@ -241,6 +244,15 @@ function createWindow() {
     updateBrowserViewBounds();
   });
 
+  // 监听窗口移动，保存位置
+  mainWindow.on('move', () => {
+    if (isShowing && mainWindow) {
+      const pos = mainWindow.getPosition();
+      lastWindowPosition = { x: pos[0], y: pos[1] };
+      console.log('窗口位置已保存:', lastWindowPosition);
+    }
+  });
+
   // 开发模式下打开开发者工具
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -438,18 +450,30 @@ function toggleFullWidth() {
   try { mainWindow.webContents.send('full-width-changed', { isFullWidth }); } catch (_) {}
 }
 
-// 显示窗口（从右侧滑入）
+// 显示窗口（直接显示，不使用动画）
 // 参考 RI 项目实现：https://github.com/kexin94yyds/RI.git (showOnActiveSpace 函数)
 function showWindow() {
   if (!mainWindow || isShowing) return;
   
   isShowing = true;
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-  const windowWidth = mainWindow.getBounds().width;
+  const { width: windowWidth } = mainWindow.getBounds();
   
-  const targetX = screenWidth - windowWidth;
+  // 使用上次保存的位置，如果没有则默认在右侧
+  let targetX, targetY;
+  if (lastWindowPosition) {
+    targetX = lastWindowPosition.x;
+    targetY = lastWindowPosition.y;
+    console.log('使用上次保存的位置:', lastWindowPosition);
+  } else {
+    // 默认在右侧
+    targetX = screenWidth - windowWidth;
+    targetY = 0;
+    lastWindowPosition = { x: targetX, y: targetY };
+  }
   
-  mainWindow.setPosition(screenWidth, 0);
+  // 设置窗口位置
+  mainWindow.setPosition(targetX, targetY);
   
   // 🔑 关键：每次显示时都要设置这些，确保窗口覆盖在当前应用上
   // 参考 RI 项目的做法，不依赖状态，每次都重新设置
@@ -470,72 +494,31 @@ function showWindow() {
   
   mainWindow.show();
   mainWindow.focus();
+  lastShowAt = Date.now(); // 记录显示时间
   
-  // 动画滑入
-  const startX = screenWidth;
-  const duration = 200;
-  const startTime = Date.now();
-  
-  const animate = () => {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / duration, 1);
-    
-    const easeProgress = 1 - Math.pow(1 - progress, 3);
-    const currentX = startX - (startX - targetX) * easeProgress;
-    
-    mainWindow.setPosition(Math.round(currentX), 0);
-    
-    if (progress < 1) {
-      setTimeout(animate, 16);
-    } else {
-      mainWindow.setPosition(targetX, 0);
-      
-      // 3. 200ms 后还原工作区可见性，仅在当前 Space 可见
-      setTimeout(() => {
-        try {
-          mainWindow.setVisibleOnAllWorkspaces(false);
-        } catch (e) {
-          console.error('还原工作区可见性失败:', e);
-        }
-      }, 200);
+  // 3. 200ms 后还原工作区可见性，仅在当前 Space 可见
+  setTimeout(() => {
+    try {
+      mainWindow.setVisibleOnAllWorkspaces(false);
+    } catch (e) {
+      console.error('还原工作区可见性失败:', e);
     }
-  };
-  
-  animate();
+  }, 200);
   
   console.log('窗口已显示，层级: floating（可交互）');
 }
 
-// 隐藏窗口（滑出到右侧）
+// 隐藏窗口（直接隐藏，不使用动画）
 function hideWindow() {
   if (!mainWindow || !isShowing) return;
   
-  const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
+  // 保存当前位置
   const currentBounds = mainWindow.getBounds();
-  const startX = currentBounds.x;
-  const targetX = screenWidth;
+  lastWindowPosition = { x: currentBounds.x, y: currentBounds.y };
+  console.log('保存窗口位置:', lastWindowPosition);
   
-  const duration = 200;
-  const startTime = Date.now();
-  
-  const animate = () => {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / duration, 1);
-    
-    const easeProgress = Math.pow(progress, 3);
-    const currentX = startX + (targetX - startX) * easeProgress;
-    
-    mainWindow.setPosition(Math.round(currentX), 0);
-    
-    if (progress < 1) {
-      setTimeout(animate, 16);
-    } else {
-      mainWindow.hide();
-      isShowing = false;
-    }
-  };
-  
-  animate();
+  mainWindow.hide();
+  isShowing = false;
 }
 
 // 切换窗口显示/隐藏
@@ -577,6 +560,21 @@ ipcMain.on('switch-provider', (event, payload) => {
 
     if (PROVIDERS[providerKey]) {
       switchToProvider(providerKey);
+      
+      // 如果提供了自定义 URL，在切换后导航到该 URL
+      if (url && currentBrowserView && currentBrowserView.webContents) {
+        console.log('Navigating to custom URL:', url);
+        // 使用 setImmediate 确保 BrowserView 已经完全添加到窗口
+        setImmediate(() => {
+          try {
+            if (currentBrowserView && currentBrowserView.webContents) {
+              currentBrowserView.webContents.loadURL(url);
+            }
+          } catch (e) {
+            console.error('Error loading URL:', e);
+          }
+        });
+      }
       return;
     }
 
