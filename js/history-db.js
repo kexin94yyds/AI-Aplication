@@ -53,7 +53,9 @@
   }
 
   async function clearAll() {
-    return withStore('readwrite', (os) => os.clear());
+    const r = await withStore('readwrite', (os) => os.clear());
+    try { if (window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.write) window.electronAPI.sync.write('history', []); } catch (_) {}
+    return r;
   }
 
   async function replace(list) {
@@ -77,7 +79,9 @@
     await withStore('readwrite', (os) => {
       trimmed.forEach(e => os.put(e));
     });
-    return getAll();
+    const out = await getAll();
+    try { if (window.AI_SYNC_WRITE_ENABLED && window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.write) window.electronAPI.sync.write('history', out); } catch (_) {}
+    return out;
   }
 
   async function add(entry) {
@@ -107,7 +111,9 @@
     }));
     // Enforce cap: if above MAX_ENTRIES, prune oldest
     await pruneIfNeeded();
-    return getAll();
+    const out = await getAll();
+    try { if (window.AI_SYNC_WRITE_ENABLED && window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.write) window.electronAPI.sync.write('history', out); } catch (_) {}
+    return out;
   }
 
   async function pruneIfNeeded() {

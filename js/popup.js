@@ -157,6 +157,9 @@ const PROVIDERS = {
 
 // Debug logging helper (set to false to silence in production)
 const DEBUG = true;
+// 镜像模式：以插件 sync/*.json 为唯一真源，不向 sync 写回，不自动追加历史
+const SYNC_MIRROR_FROM_PLUGIN = true;
+try { window.AI_SYNC_WRITE_ENABLED = !SYNC_MIRROR_FROM_PLUGIN; } catch (_) {}
 const dbg = (...args) => { try { if (DEBUG) console.log('[AISidebar]', ...args); } catch (_) {} };
 
 // Custom provider helpers (for Add AI)
@@ -764,31 +767,49 @@ let __pendingFavInlineEditUrl = null;
 let __pendingFavCloseOnEnter = false;
 let __favSearchQuery = '';
 
+// 获取当前展示 URL（Electron BrowserView 优先）
+async function getCurrentDisplayedUrl() {
+  try {
+    if (IS_ELECTRON && window.electronAPI?.getCurrentUrl) {
+      const url = await window.electronAPI.getCurrentUrl();
+      if (url) return url;
+    }
+  } catch (_) {}
+  try {
+    const openInTab = document.getElementById('openInTab');
+    if (openInTab && openInTab.dataset && openInTab.dataset.url) return openInTab.dataset.url;
+  } catch (_) {}
+  try {
+    const iframeContainer = document.getElementById('iframe');
+    const activeFrame = iframeContainer?.querySelector('[data-provider]:not([style*="display: none"])');
+    if (activeFrame && activeFrame.src) return activeFrame.src;
+  } catch (_) {}
+  try {
+    const key = await getProvider();
+    if (key && currentUrlByProvider && currentUrlByProvider[key]) return currentUrlByProvider[key];
+  } catch (_) {}
+  return '';
+}
+
 // Update star button state based on current URL
 async function updateStarButtonState() {
   try {
     const starBtn = document.getElementById('starBtn');
-    const openInTab = document.getElementById('openInTab');
-    if (!starBtn || !openInTab) return;
-    
-    const currentUrl = openInTab.dataset.url;
-    if (!currentUrl || currentUrl === '#') {
-      starBtn.textContent = '☆'; // Empty star
+    if (!starBtn) return;
+    const currentUrl = await getCurrentDisplayedUrl();
+    if (!currentUrl) {
+      starBtn.textContent = '☆';
       starBtn.classList.remove('starred');
       return;
     }
-    
-    // Normalize current URL for comparison
     const normalizedCurrent = normalizeUrlForMatch(currentUrl);
-    
     const favList = await loadFavorites();
     const isStarred = (favList || []).some(fav => normalizeUrlForMatch(fav.url) === normalizedCurrent);
-    
     if (isStarred) {
-      starBtn.textContent = '★'; // Filled star (black)
+      starBtn.textContent = '★';
       starBtn.classList.add('starred');
     } else {
-      starBtn.textContent = '☆'; // Empty star (white)
+      starBtn.textContent = '☆';
       starBtn.classList.remove('starred');
     }
   } catch (_) {}
@@ -807,6 +828,15 @@ async function loadFavorites() {
 }
 async function saveFavorites(list) {
   try { await chrome.storage?.local.set({ [FAVORITES_KEY]: list }); } catch (_) {}
+  try {
+    if (!SYNC_MIRROR_FROM_PLUGIN && IS_ELECTRON && window.electronAPI?.sync?.write) {
+      window.electronAPI.sync.write('favorites', list || []);
+    }
+  } catch (_) {}
+}
+
+async function saveFavoritesLocalOnly(list) {
+  try { await chrome.storage?.local.set({ [FAVORITES_KEY]: list || [] }); } catch (_) {}
 }
 async function addFavorite(entry) {
   try {
@@ -853,8 +883,7 @@ async function renderFavoritesPanel() {
     
     panel.querySelector('#fp-add-current')?.addEventListener('click', async ()=>{
       try {
-        const a = document.getElementById('openInTab');
-        const href = a && a.href;
+        const href = await getCurrentDisplayedUrl();
         const provider = (await getProvider())||'chatgpt';
         if (href) {
           __pendingFavInlineEditUrl = href;
@@ -1065,7 +1094,8 @@ const ensureFrame = async (container, key, provider) => {
     
     // 通知主进程切换到这个 provider
     if (window.electronAPI && window.electronAPI.switchProvider) {
-      window.electronAPI.switchProvider(key);
+      const targetUrl = provider.baseUrl || provider.iframeUrl || '';
+      window.electronAPI.switchProvider({ key, url: targetUrl });
     }
     
     // 更新 Open in Tab 按钮
@@ -1431,29 +1461,52 @@ const initializeBar = async () => {
   // The rest of this function is now handled by renderProviderTabs
   // No need to build a separate list of providers here.
 
-  if (openInTab) {
-    const preferred = currentUrlByProvider[currentProviderKey] || mergedCurrent.baseUrl;
-    openInTab.dataset.url = preferred;
-    try { openInTab.title = preferred; } catch (_) {}
-    // 初始化星号按钮状态
-    await updateStarButtonState();
+  // 初始化星号按钮状态（移除 Open in Tab 后依旧可用）
+  await updateStarButtonState();
 
-    // Open the current provider URL in a new tab
-    openInTab.addEventListener('click', async (e) => {
-      try {
-        e.preventDefault();
-      } catch (_) {}
-      const url = openInTab.dataset.url || preferred || mergedCurrent.baseUrl;
-      try { window.open(url, '_blank'); } catch (_) {}
-    });
-  }
+  // 全宽按钮与双击顶部切换（Electron 专用）
+  try {
+    const fullBtn = document.getElementById('fullscreenBtn');
+    if (IS_ELECTRON && window.electronAPI) {
+      const updateLabel = (state) => {
+        try {
+          const on = !!(state && state.isFullWidth);
+          if (fullBtn) {
+            fullBtn.textContent = on ? '⤡ Exit Full' : '⤢ Full';
+            fullBtn.title = on ? '还原到原来的宽度' : '切换为全屏宽度';
+          }
+        } catch (_) {}
+      };
+      // 初始状态
+      window.electronAPI.getFullWidthState?.().then(updateLabel);
+      window.electronAPI.onFullWidthChanged?.(updateLabel);
+      // 按钮点击
+      if (fullBtn) {
+        fullBtn.addEventListener('click', () => {
+          try { window.electronAPI.toggleFullWidth?.(); } catch (_) {}
+        });
+      }
+      // 顶部拖拽区双击切换
+      const dragZone = document.querySelector('.drag-zone');
+      if (dragZone) {
+        dragZone.addEventListener('dblclick', (e) => {
+          // 避免与工具栏按钮的点击冲突
+          if (e.target && (e.target.closest && e.target.closest('.toolbar'))) return;
+          try { window.electronAPI.toggleFullWidth?.(); } catch (_) {}
+        });
+      }
+    } else if (fullBtn) {
+      // 非 Electron 环境隐藏该按钮
+      fullBtn.style.display = 'none';
+    }
+  } catch (_) {}
 
 
   // History button handler
   try {
     const hBtn = document.getElementById('historyBtn');
     const panel = document.getElementById('historyPanel');
-    const ensureBackdrop = () => {
+  const ensureBackdrop = () => {
       let bd = document.getElementById('historyBackdrop');
       if (!bd) {
         bd = document.createElement('div');
@@ -1474,10 +1527,23 @@ const initializeBar = async () => {
       await renderHistoryPanel();
       panel.style.display = 'block';
       ensureBackdrop();
+      try {
+        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
+          const rect = panel.getBoundingClientRect();
+          const reserve = Math.ceil(rect.bottom) + 8; // 额外留白
+          window.electronAPI.setTopInset(reserve);
+        }
+      } catch (_) {}
     };
     const hideHistoryPanel = () => {
       panel.style.display = 'none';
       removeBackdrop();
+      try {
+        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
+          // 关闭时按其他可见浮层重算
+          requestAnimationFrame(refreshTopInsetFromVisibleOverlays);
+        }
+      } catch (_) {}
     };
     window.hideHistoryPanel = hideHistoryPanel; // expose for other handlers if needed
     window.showHistoryPanel = showHistoryPanel;
@@ -1492,8 +1558,10 @@ const initializeBar = async () => {
       });
     }
 
-    // Close with Escape
-    document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') hideHistoryPanel(); }, true);
+  // Close with Escape
+  document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') hideHistoryPanel(); }, true);
+  // 窗口尺寸变更时重算预留空间
+  window.addEventListener('resize', ()=>{ try { refreshTopInsetFromVisibleOverlays(); } catch(_){} });
   } catch (_) {}
 
   // Favorites button handler
@@ -1541,10 +1609,22 @@ const initializeBar = async () => {
       await renderFavoritesPanel();
       panel.style.display = 'block';
       ensureBackdrop();
+      try {
+        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
+          const rect = panel.getBoundingClientRect();
+          const reserve = Math.ceil(rect.bottom) + 8;
+          window.electronAPI.setTopInset(reserve);
+        }
+      } catch (_) {}
     };
     const hideFavoritesPanel = () => {
       panel.style.display = 'none';
       removeBackdrop();
+      try {
+        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
+          requestAnimationFrame(refreshTopInsetFromVisibleOverlays);
+        }
+      } catch (_) {}
     };
     window.hideFavoritesPanel = hideFavoritesPanel;
     window.showFavoritesPanel = showFavoritesPanel;
@@ -1595,8 +1675,7 @@ const initializeBar = async () => {
     if (starBtn) {
       starBtn.addEventListener('click', async () => {
         try {
-          const openInTab = document.getElementById('openInTab');
-          const href = openInTab && openInTab.dataset.url;
+          const href = await getCurrentDisplayedUrl();
           const provider = (await getProvider()) || 'chatgpt';
           
           if (!href || href === '#') return;
@@ -2016,18 +2095,14 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onBrowserViewUrlChan
     // 如果是当前激活的 provider，更新 Open in Tab 按钮
     getProvider().then(currentProvider => {
       if (currentProvider === providerKey) {
-        const openInTab = document.getElementById('openInTab');
-        if (openInTab && url) {
-          openInTab.dataset.url = url;
-          openInTab.title = url;
-        }
-        
         // 更新 Star 按钮状态
         updateStarButtonState();
         
-        // 自动保存深链接到历史记录
-        if (isDeepLink(providerKey, url)) {
-          addHistory({ url, provider: providerKey, title: title || '' });
+        // 镜像模式下不自动追加历史，保持与插件一致
+        if (!SYNC_MIRROR_FROM_PLUGIN) {
+          if (isDeepLink(providerKey, url)) {
+            addHistory({ url, provider: providerKey, title: title || '' });
+          }
         }
       }
     });
@@ -2200,6 +2275,23 @@ initializeBar();
   let isSearchVisible = false;
   let currentSearchTerm = '';
 
+  // 统一根据可见浮层计算并通知主进程保留顶部空间
+  window.refreshTopInsetFromVisibleOverlays = function refreshTopInsetFromVisibleOverlays() {
+    try {
+      if (!(IS_ELECTRON && window.electronAPI?.setTopInset)) return;
+      let reserve = 50; // 基础工具栏
+      const ids = ['searchBar','historyPanel','favoritesPanel'];
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el && el.style.display !== 'none') {
+          const r = el.getBoundingClientRect();
+          reserve = Math.max(reserve, Math.ceil(r.bottom) + 8);
+        }
+      }
+      window.electronAPI.setTopInset(reserve);
+    } catch (_) {}
+  };
+
   // 切换搜索框显示/隐藏
   function toggleSearch() {
     isSearchVisible = !isSearchVisible;
@@ -2208,6 +2300,13 @@ initializeBar();
       searchBar.style.display = 'block';
       searchInput.focus();
       searchInput.select();
+      try {
+        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
+          const rect = searchBar.getBoundingClientRect();
+          const reserve = Math.ceil(rect.bottom) + 8;
+          window.electronAPI.setTopInset(reserve);
+        }
+      } catch (_) {}
       
       // 高亮搜索按钮
       if (searchBtn) {
@@ -2221,6 +2320,11 @@ initializeBar();
     } else {
       searchBar.style.display = 'none';
       clearSearch();
+      try {
+        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
+          requestAnimationFrame(refreshTopInsetFromVisibleOverlays);
+        }
+      } catch (_) {}
       
       // 取消高亮搜索按钮
       if (searchBtn) {
@@ -2428,4 +2532,39 @@ initializeBar();
   }
 
   dbg('搜索功能已初始化');
+})();
+
+// ============== 与插件目录的文件同步（导入 + 监听） ==============
+(async function syncImportFromExternalIfAny(){
+  try {
+    if (!(IS_ELECTRON && window.electronAPI && window.electronAPI.sync)) return;
+    // 初次导入：Favorites（镜像）
+    try {
+      const extFavs = await window.electronAPI.sync.read('favorites');
+      if (Array.isArray(extFavs)) {
+        await saveFavoritesLocalOnly(extFavs);
+      }
+    } catch (_) {}
+    // 初次导入：History（镜像）
+    try {
+      const extHist = await window.electronAPI.sync.read('history');
+      if (Array.isArray(extHist) && window.HistoryDB && HistoryDB.replace) {
+        await HistoryDB.replace(extHist);
+      }
+    } catch (_) {}
+    // 监听文件变更（镜像覆盖）
+    try {
+      window.electronAPI.sync.onUpdated?.(async (name, data) => {
+        try {
+          if (name === 'favorites' && Array.isArray(data)) {
+            await saveFavoritesLocalOnly(data);
+            await updateStarButtonState();
+          }
+          if (name === 'history' && Array.isArray(data) && window.HistoryDB) {
+            await HistoryDB.replace(data);
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+  } catch (_) {}
 })();

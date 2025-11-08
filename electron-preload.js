@@ -7,9 +7,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
   
   // Provider 切换 - 使用 BrowserView
-  switchProvider: (providerKey) => {
-    console.log('[Preload] switchProvider called with:', providerKey);
-    ipcRenderer.send('switch-provider', providerKey);
+  switchProvider: (providerKey, url) => {
+    try {
+      const payload = (typeof providerKey === 'object' && providerKey)
+        ? providerKey
+        : { key: providerKey, url };
+      console.log('[Preload] switchProvider called with:', payload);
+      ipcRenderer.send('switch-provider', payload);
+    } catch (e) {
+      console.error('[Preload] switchProvider error:', e);
+    }
   },
   
   // 在浏览器中打开 URL
@@ -41,9 +48,53 @@ contextBridge.exposeInMainWorld('electronAPI', {
     });
   },
   
+  // ============== 截屏功能 ==============
+  captureScreenshot: () => {
+    ipcRenderer.send('capture-screenshot');
+  },
+  onScreenshotCaptured: (callback) => {
+    ipcRenderer.on('screenshot-captured', (event, data) => callback(data));
+  },
+  onScreenshotError: (callback) => {
+    ipcRenderer.on('screenshot-error', (event, error) => callback(error));
+  },
+  onScreenshotPasteResult: (callback) => {
+    ipcRenderer.on('screenshot-auto-paste-result', (event, data) => callback(data));
+  },
+  
+  // ============== 文字选择功能 ==============
+  getSelectedText: () => {
+    ipcRenderer.send('get-selected-text');
+  },
+  onSelectedText: (callback) => {
+    ipcRenderer.on('selected-text', (event, data) => callback(data));
+  },
+  onSelectedTextError: (callback) => {
+    ipcRenderer.on('selected-text-error', (event, error) => callback(error));
+  },
+  
   // 置顶控制
   toggleAlwaysOnTop: () => {
     ipcRenderer.send('toggle-always-on-top');
+  },
+
+  // 顶部预留区域（保障浮层位于 BrowserView 之上）
+  setTopInset: (px) => {
+    try { ipcRenderer.send('set-top-inset', Math.max(0, Math.floor(px||0))); } catch (_) {}
+  },
+
+  // 全宽切换（非操作系统原生全屏，保持当前 Space）
+  toggleFullWidth: () => {
+    ipcRenderer.send('toggle-full-width');
+  },
+  getFullWidthState: () => {
+    return new Promise((resolve) => {
+      ipcRenderer.once('full-width-state', (event, state) => resolve(state));
+      ipcRenderer.send('get-full-width-state');
+    });
+  },
+  onFullWidthChanged: (callback) => {
+    ipcRenderer.on('full-width-changed', (event, state) => callback(state));
   },
   
   // 获取置顶状态
@@ -61,6 +112,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('always-on-top-changed', (event, status) => {
       callback(status);
     });
+  },
+
+  // 文件同步（与浏览器插件共享数据）
+  sync: {
+    setBase: (dir) => { ipcRenderer.send('sync-set-base', dir); },
+    read: (name) => new Promise((resolve) => {
+      ipcRenderer.once('sync-read-resp', (e, payload) => {
+        if (payload && payload.name === name) resolve(payload.data); else resolve(null);
+      });
+      ipcRenderer.send('sync-read', { name });
+    }),
+    write: (name, data) => {
+      ipcRenderer.send('sync-write', { name, data });
+    },
+    onUpdated: (cb) => {
+      ipcRenderer.on('sync-updated', (e, payload) => { try { cb(payload && payload.name, payload && payload.data); } catch(_){} });
+    }
   },
   
   // 存储 API（使用 localStorage 作为简单实现）

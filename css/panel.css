@@ -88,7 +88,7 @@ html {
   height: 40px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   flex-wrap: nowrap;
   padding: 0 12px;
@@ -98,12 +98,12 @@ html {
   border-radius: 12px;
   box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
   z-index: 100; /* 在拖动区域之上 */
-  -webkit-app-region: drag; /* 工具栏背景也可拖动 */
-  /* Hidden by default; reveal on hover */
-  opacity: 0;
-  transform: translateY(-8px);
-  pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  -webkit-app-region: no-drag; /* 背景不拖动，留给中间空白 */
+  /* 固定显示在顶部 */
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition: none;
 }
 
 .toolbar label {
@@ -517,11 +517,15 @@ html {
 
 /* Reveal toolbar when hovering top edge or toolbar itself */
 .hover-zone:hover ~ .toolbar,
-.toolbar:hover {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto; /* 显示时允许按钮点击 */
-  -webkit-app-region: drag; /* 工具栏背景仍然可拖动 */
+.toolbar:hover { /* 保持固定显示，不再依赖 hover */ }
+
+/* 中间用于拖动的空白区域 */
+.toolbar-spacer {
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 120px; /* 留出可见空白 */
+  -webkit-app-region: drag;
+  cursor: move;
 }
 
 /* toolbar buttons removed */

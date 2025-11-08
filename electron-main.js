@@ -1,12 +1,171 @@
-const { app, BrowserWindow, BrowserView, globalShortcut, screen, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, BrowserView, globalShortcut, screen, ipcMain, shell, Tray, Menu, desktopCapturer, clipboard } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 
 let mainWindow = null;
 let isShowing = false;
 let currentBrowserView = null;
 const browserViews = {}; // 缓存所有 BrowserView
+let tray = null;
+// 自定义全宽模式（非系统原生全屏）
+let isFullWidth = false;
+let restoreBounds = null; // 记录进入全宽之前的窗口尺寸
+// 顶部 UI 占用的预留空间（像素）
+let topInset = 50; // 基础工具栏高度
+
+// ============== 与插件数据同步（JSON 文件） ==============
+const DEFAULT_SYNC_DIR = '/Users/apple/AI-sidebar 更新/AI-Sidebar';
+let syncBaseDir = DEFAULT_SYNC_DIR;
+function resolveSyncBaseDir() {
+  try {
+    const home = app.getPath('home');
+    const env = process.env.AISIDEBAR_SYNC_DIR;
+    const candidates = [];
+    if (env && env.trim()) candidates.push(env.trim());
+    candidates.push(DEFAULT_SYNC_DIR);
+    candidates.push(path.join(home, 'AI-sidebar 更新', 'AI-Sidebar'));
+    candidates.push(path.join(home, '全局 ai 侧边栏', 'AI-Sidebar'));
+    candidates.push(path.join(process.cwd()));
+    for (const base of candidates) {
+      try {
+        const s = path.join(base, 'sync');
+        if (fs.existsSync(s)) { syncBaseDir = base; return; }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  // fallback to default
+  syncBaseDir = DEFAULT_SYNC_DIR;
+}
+function syncFolder() {
+  const dir = path.join(syncBaseDir, 'sync');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  return dir;
+}
+function syncPath(name) {
+  return path.join(syncFolder(), `${name}.json`);
+}
+function readSyncFile(name) {
+  try {
+    const p = syncPath(name);
+    if (!fs.existsSync(p)) return null;
+    const raw = fs.readFileSync(p, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+function writeSyncFile(name, data) {
+  try {
+    const p = syncPath(name);
+    const tmp = p + '.tmp';
+    const raw = JSON.stringify(data ?? null, null, 2);
+    fs.writeFileSync(tmp, raw, 'utf8');
+    fs.renameSync(tmp, p);
+    lastFileContent[name] = raw;
+    return true;
+  } catch (e) { console.error('writeSyncFile error:', e); return false; }
+}
+let fileWatchers = {};
+const lastFileContent = {};
+function watchSyncFile(name) {
+  try {
+    const p = syncPath(name);
+    if (fileWatchers[name]) return;
+    // 初次确保文件存在
+    try { if (!fs.existsSync(p)) fs.writeFileSync(p, '[]', 'utf8'); } catch (_) {}
+    try { lastFileContent[name] = fs.readFileSync(p, 'utf8'); } catch (_) { lastFileContent[name] = '[]'; }
+    const w = fs.watch(p, { persistent: true }, (evt) => {
+      if (evt === 'change' || evt === 'rename') {
+        try {
+          const raw = fs.readFileSync(p, 'utf8');
+          if (raw === lastFileContent[name]) return; // ignore self writes
+          lastFileContent[name] = raw;
+          const data = JSON.parse(raw);
+          mainWindow?.webContents.send('sync-updated', { name, data });
+        } catch (_) {}
+      }
+    });
+    fileWatchers[name] = w;
+  } catch (e) { console.error('watchSyncFile error:', e); }
+}
+
+// ============== 内置同步 HTTP 服务（供 Chrome 扩展调用） ==============
+let httpServer = null;
+const SYNC_PORT = 3456;
+function startSyncHttpServer() {
+  if (httpServer) return;
+  try {
+    httpServer = http.createServer(async (req, res) => {
+      // CORS
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+      const url = req.url || '/';
+      if (req.method === 'GET' && (url === '/ping' || url === '/status')) {
+        const status = {
+          ok: true,
+          base: syncBaseDir,
+          files: {}
+        };
+        try {
+          const h = readSyncFile('history') || [];
+          const f = readSyncFile('favorites') || [];
+          status.files = { history: h.length||0, favorites: f.length||0 };
+        } catch (_) {}
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status));
+        return;
+      }
+      // helper to read body
+      const readBody = () => new Promise((resolve) => {
+        let data = '';
+        req.on('data', (chunk) => { data += chunk; if (data.length > 10*1024*1024) req.destroy(); });
+        req.on('end', () => resolve(data));
+        req.on('error', () => resolve(''));
+      });
+
+      if (req.method === 'POST' && (url === '/sync/history' || url === '/sync/favorites' || url === '/write')) {
+        try {
+          const raw = await readBody();
+          let payload = {};
+          try { payload = JSON.parse(raw || '{}'); } catch (_) {}
+          // accept both formats:
+          // 1) { name: 'history'|'favorites', data: [...] }
+          // 2) direct array + endpoint by path
+          let name = payload && payload.name;
+          if (!name) {
+            if (url.includes('history')) name = 'history';
+            else if (url.includes('favorites')) name = 'favorites';
+          }
+          const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+          if (!name || !Array.isArray(data)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'bad-payload' }));
+            return;
+          }
+          writeSyncFile(name, data);
+          // 立即向渲染进程广播更新
+          try { mainWindow?.webContents.send('sync-updated', { name, data }); } catch (_) {}
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, name, count: data.length }));
+          return;
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: String(e && e.message || e) }));
+          return;
+        }
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'not-found' }));
+    }).listen(SYNC_PORT); // listen on all interfaces (IPv4/IPv6)
+    console.log('Sync HTTP server started at http://localhost:' + SYNC_PORT);
+  } catch (e) {
+    console.error('Failed to start sync HTTP server:', e);
+  }
+}
 
 // AI 提供商配置
 const PROVIDERS = {
@@ -205,8 +364,8 @@ function updateBrowserViewBounds() {
   
   // 左侧留出 60px 给导航栏
   const sidebarWidth = 60;
-  // 顶部留出 50px 给 hover zone 和工具栏
-  const topBarHeight = 50;
+  // 顶部留出空间给工具栏/面板
+  const topBarHeight = Math.max(0, Math.floor(topInset || 0));
   
   currentBrowserView.setBounds({
     x: sidebarWidth,
@@ -234,6 +393,30 @@ function updateBrowserViewBounds() {
     width: bounds.width - sidebarWidth,
     height: bounds.height - topBarHeight
   });
+}
+
+// 切换窗口为全宽/恢复
+function toggleFullWidth() {
+  if (!mainWindow) return;
+  const display = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = display.workAreaSize;
+
+  if (!isFullWidth) {
+    // 记录当前尺寸，并展开到当前工作区全宽（保持顶端、右缘不外溢）
+    restoreBounds = mainWindow.getBounds();
+    mainWindow.setBounds({ x: 0, y: 0, width: screenWidth, height: screenHeight });
+    isFullWidth = true;
+  } else {
+    // 恢复宽度，并把窗口贴回到屏幕右侧
+    const width = Math.min(restoreBounds?.width || Math.floor(screenWidth * 0.4), screenWidth);
+    const height = screenHeight; // 始终贴满高度
+    const x = screenWidth - width;
+    mainWindow.setBounds({ x, y: 0, width, height });
+    isFullWidth = false;
+  }
+  // 触发 BrowserView 尺寸更新
+  updateBrowserViewBounds();
+  try { mainWindow.webContents.send('full-width-changed', { isFullWidth }); } catch (_) {}
 }
 
 // 显示窗口（从右侧滑入）
@@ -347,10 +530,68 @@ function toggleWindow() {
   }
 }
 
+// 系统托盘用于兜底唤起
+function setupTray() {
+  try {
+    if (tray) return; // 已存在
+    const iconPath = path.join(__dirname, 'images', 'icon16.png');
+    tray = new Tray(iconPath);
+    tray.setToolTip('AI Sidebar');
+    const menu = Menu.buildFromTemplate([
+      { label: '显示/隐藏侧边栏', click: () => toggleWindow() },
+      { type: 'separator' },
+      { label: '退出', click: () => app.quit() }
+    ]);
+    tray.setContextMenu(menu);
+    tray.on('click', () => toggleWindow());
+  } catch (e) {
+    console.error('创建托盘失败:', e);
+  }
+}
+
 // IPC 事件处理
-ipcMain.on('switch-provider', (event, providerKey) => {
-  console.log('IPC received switch-provider:', providerKey);
-  switchToProvider(providerKey);
+ipcMain.on('switch-provider', (event, payload) => {
+  try {
+    const providerKey = (typeof payload === 'object' && payload && payload.key) ? payload.key : payload;
+    const url = (typeof payload === 'object' && payload && payload.url) ? payload.url : null;
+    console.log('IPC received switch-provider:', providerKey, url ? `(url: ${url})` : '');
+
+    if (PROVIDERS[providerKey]) {
+      switchToProvider(providerKey);
+      return;
+    }
+
+    // 支持临时/自定义 provider（PROVIDERS 中没有时）
+    if (url) {
+      // 动态创建一个临时视图
+      console.log('Switching to dynamic provider:', providerKey, url);
+      
+      // 移除当前视图
+      if (currentBrowserView) {
+        try { mainWindow.removeBrowserView(currentBrowserView); } catch (e) { console.error('Error removing view:', e); }
+      }
+      
+      const view = new BrowserView({
+        webPreferences: {
+          partition: 'persist:' + (providerKey || 'custom'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          enableRemoteModule: false,
+        }
+      });
+      view.webContents.loadURL(url);
+      mainWindow.addBrowserView(view);
+      currentBrowserView = view;
+      updateBrowserViewBounds();
+      mainWindow.webContents.send('provider-switched', providerKey || 'custom');
+      return;
+    }
+
+    console.warn('Unknown provider and missing URL:', providerKey);
+  } catch (e) {
+    console.error('switch-provider handler error:', e);
+  }
 });
 
 // 在 Chrome 浏览器中打开链接
@@ -383,6 +624,242 @@ ipcMain.on('get-current-url', (event) => {
   } else {
     event.reply('current-url', null);
   }
+});
+
+// 全宽切换与状态查询
+ipcMain.on('toggle-full-width', () => {
+  toggleFullWidth();
+});
+ipcMain.on('get-full-width-state', (event) => {
+  event.reply('full-width-state', { isFullWidth });
+});
+
+// 设置顶部预留空间（由渲染进程计算需要的像素）
+ipcMain.on('set-top-inset', (event, px) => {
+  try {
+    const bounds = mainWindow ? mainWindow.getContentBounds() : null;
+    const maxAllowed = bounds ? Math.max(0, bounds.height - 50) : 2000;
+    const next = Math.max(0, Math.min(parseInt(px || 0, 10), maxAllowed));
+    if (next !== topInset) {
+      topInset = next;
+      updateBrowserViewBounds();
+    }
+  } catch (_) {}
+});
+
+// ============== 截屏与文字注入（自动送入输入框） ==============
+async function captureScreen() {
+  try {
+    // 使用主屏幕分辨率作为缩略图尺寸
+    const displaySize = screen.getPrimaryDisplay().size;
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: displaySize });
+    if (!sources || sources.length === 0) return null;
+    const source = sources[0];
+    const image = source.thumbnail; // NativeImage
+    try { clipboard.writeImage(image); } catch (_) {}
+    return { dataUrl: image.toDataURL(), createdAt: Date.now() };
+  } catch (e) {
+    console.error('captureScreen error:', e);
+    return null;
+  }
+}
+
+async function insertImageIntoCurrentView(dataUrl) {
+  if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
+  try { currentBrowserView.webContents.focus(); } catch (_) {}
+  try {
+    const result = await currentBrowserView.webContents.executeJavaScript(`
+      (async function() {
+        try {
+          const dataUrl = ${JSON.stringify('')};
+          const real = ${JSON.stringify(dataUrl)};
+          const resp = await fetch(real);
+          const blob = await resp.blob();
+          const file = new File([blob], 'screenshot-' + Date.now() + '.png', { type: blob.type || 'image/png' });
+          function findPromptElement() {
+            const selectors = [
+              'textarea',
+              'div[contenteditable="true"]',
+              '[role="textbox"]',
+              '[aria-label*="prompt" i]',
+              '[data-testid*="prompt" i]',
+              '[data-testid*="textbox" i]'
+            ];
+            for (const selector of selectors) {
+              const els = Array.from(document.querySelectorAll(selector));
+              const visible = els.filter(el => {
+                const s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+              });
+              if (visible.length) {
+                visible.sort((a,b)=>b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+                return visible[0];
+              }
+            }
+            return null;
+          }
+          const el = findPromptElement();
+          if (!el) return { ok:false, error:'no-input' };
+          try { el.focus(); } catch(_){}
+
+          // 1) 模拟粘贴事件
+          try {
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const e = new ClipboardEvent('paste', { bubbles:true, cancelable:true });
+            try { Object.defineProperty(e, 'clipboardData', { get: () => dt }); } catch (_) {}
+            const pasted = el.dispatchEvent(e);
+            if (!pasted) return { ok:true, method:'clipboard-event' };
+          } catch (_) {}
+
+          // 2) 模拟拖拽
+          try {
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const rect = el.getBoundingClientRect();
+            const clientX = Math.max(rect.left + 10, 0);
+            const clientY = Math.max(rect.top + 10, 0);
+            const ev1 = new DragEvent('dragenter', { bubbles:true, cancelable:true, clientX, clientY });
+            const ev2 = new DragEvent('dragover', { bubbles:true, cancelable:true, clientX, clientY });
+            const ev3 = new DragEvent('drop', { bubbles:true, cancelable:true, clientX, clientY });
+            try { Object.defineProperty(ev1, 'dataTransfer', { get: () => dt }); Object.defineProperty(ev2, 'dataTransfer', { get: () => dt }); Object.defineProperty(ev3, 'dataTransfer', { get: () => dt }); } catch (_) {}
+            el.dispatchEvent(ev1);
+            el.dispatchEvent(ev2);
+            const ok = el.dispatchEvent(ev3);
+            if (!ok) return { ok:true, method:'drag-drop' };
+          } catch (_) {}
+
+          // 3) 直接 file input
+          try {
+            const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+            for (const input of inputs) {
+              const dt = new DataTransfer();
+              dt.items.add(file);
+              input.files = dt.files;
+              input.dispatchEvent(new Event('change', { bubbles:true }));
+              return { ok:true, method:'file-input' };
+            }
+          } catch (_) {}
+          return { ok:false, error:'all-methods-failed' };
+        } catch (e) {
+          return { ok:false, error: String(e && e.message || e) };
+        }
+      })();
+    `);
+    if (result && result.ok) return result;
+    // 兜底用系统级粘贴
+    try { currentBrowserView.webContents.paste(); return { ok:true, method:'system-paste' }; } catch (e) { return { ok:false, error:String(e) }; }
+  } catch (e) {
+    return { ok:false, error:String(e) };
+  }
+}
+
+function simulateSystemCopy() {
+  return new Promise((resolve) => {
+    try {
+      if (process.platform === 'darwin') {
+        // 通过 AppleScript 发送 Cmd+C（需要“辅助功能”权限）
+        exec('osascript -e "tell application \"System Events\" to keystroke \"c\" using {command down}"', () => resolve());
+      } else if (process.platform === 'win32') {
+        // PowerShell 发送 Ctrl+C
+        const cmd = 'powershell -command "$wshell = New-Object -ComObject wscript.shell; $wshell.SendKeys(\'^c\')"';
+        exec(cmd, () => resolve());
+      } else {
+        // Linux: xdotool（若不可用则直接返回）
+        exec('which xdotool >/dev/null 2>&1 && xdotool key --clearmodifiers ctrl+c', () => resolve());
+      }
+    } catch (_) { resolve(); }
+  });
+}
+
+async function getSelectedTextAuto() {
+  try {
+    let text = '';
+    try { text = clipboard.readText(); } catch (_) {}
+    if (text && text.trim()) return text;
+    // 尝试模拟一次系统复制
+    await simulateSystemCopy();
+    await new Promise(r => setTimeout(r, 140));
+    try { text = clipboard.readText(); } catch (_) {}
+    return (text && text.trim()) ? text : '';
+  } catch (e) {
+    console.error('read clipboard text error:', e);
+    return '';
+  }
+}
+
+async function insertTextIntoCurrentView(text) {
+  if (!text) return { ok:false, error:'empty' };
+  if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
+  try {
+    const ok = await currentBrowserView.webContents.executeJavaScript(`
+      (function(){
+        try {
+          const text = ${JSON.stringify(text)};
+          function findPromptElement(){
+            const selectors=['textarea','div[contenteditable="true"]','[role="textbox"]','[aria-label*="prompt" i]','[data-testid*="prompt" i]','[data-testid*="textbox" i]'];
+            for (const s of selectors){
+              const els=Array.from(document.querySelectorAll(s));
+              const visible=els.filter(el=>{const cs=getComputedStyle(el);return cs.display!=='none' && cs.visibility!=='hidden' && el.offsetParent!==null;});
+              if (visible.length){visible.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);return visible[0];}
+            }
+            return null;
+          }
+          function setEl(el, t){
+            const tag=(el.tagName||'').toLowerCase();
+            if (tag==='textarea' || (el.value!==undefined)){
+              el.focus();
+              const cur=String(el.value||'');
+              const nv=cur? (cur+'\n'+t): t;
+              el.value=nv; try{ el.selectionStart=el.selectionEnd=nv.length; }catch(_){}
+              el.scrollTop=el.scrollHeight;
+              el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
+              el.dispatchEvent(new Event('change',{bubbles:true}));
+              return true;
+            }
+            if (el.isContentEditable || el.getAttribute('contenteditable')==='true'){
+              el.focus();
+              const sel=window.getSelection(); const range=document.createRange();
+              range.selectNodeContents(el); range.collapse(false); sel.removeAllRanges(); sel.addRange(range);
+              if (el.textContent && el.textContent.trim()) document.execCommand('insertText',false,'\n');
+              document.execCommand('insertText',false,t);
+              el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
+              return true;
+            }
+            return false;
+          }
+          const el=findPromptElement();
+          if (!el) return false;
+          return setEl(el,text);
+        } catch(e){ return false; }
+      })();
+    `);
+    return { ok: !!ok };
+  } catch (e) {
+    return { ok:false, error:String(e) };
+  }
+}
+
+// renderer 请求截屏
+ipcMain.on('capture-screenshot', async () => {
+  // 无闪烁截屏：启用内容保护，避免把本窗口捕获进去
+  try { mainWindow?.setContentProtection(true); } catch (_) {}
+  await new Promise(r=> setTimeout(r, 30));
+  const shot = await captureScreen();
+  try { mainWindow?.setContentProtection(false); } catch (_) {}
+  if (!shot) { mainWindow?.webContents.send('screenshot-error', 'capture-failed'); return; }
+  mainWindow.webContents.send('screenshot-captured', { ...shot, autoPasted: true });
+  const res = await insertImageIntoCurrentView(shot.dataUrl);
+  mainWindow.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
+});
+
+// renderer 请求读取选中文字
+ipcMain.on('get-selected-text', async () => {
+  const text = await getSelectedTextAuto();
+  if (!text) { mainWindow?.webContents.send('selected-text-error', '未检测到剪贴板文字'); return; }
+  mainWindow?.webContents.send('selected-text', { text });
+  const res = await insertTextIntoCurrentView(text);
+  if (!res.ok) console.warn('insert text failed:', res.error);
 });
 
 // 置顶切换
@@ -448,19 +925,72 @@ ipcMain.on('get-always-on-top', (event) => {
 // 应用准备就绪
 app.whenReady().then(() => {
   createWindow();
+  setupTray();
+  // 解析并准备同步目录
+  try { resolveSyncBaseDir(); } catch (_) {}
+  // 启动文件同步监控
+  try { syncFolder(); watchSyncFile('favorites'); watchSyncFile('history'); } catch (_) {}
+  // 启动内置同步 HTTP 服务
+  startSyncHttpServer();
   
-  // 注册全局快捷键：Option + Space
-  const ret = globalShortcut.register('Alt+Space', () => {
-    console.log('全局快捷键触发：Option + Space');
+  // 注册多组全局快捷键，避免冲突
+  const primaryHotkey = 'Alt+Space';
+  const fallbackHotkey = process.platform === 'darwin' ? 'Command+Shift+Space' : 'Control+Shift+Space';
+  const extraHotkey = 'F13';
+
+  const ok1 = globalShortcut.register(primaryHotkey, () => {
+    console.log('全局快捷键触发：', primaryHotkey);
     toggleWindow();
   });
+  const ok2 = globalShortcut.register(fallbackHotkey, () => {
+    console.log('全局快捷键触发（备用）：', fallbackHotkey);
+    toggleWindow();
+  });
+  const ok3 = globalShortcut.register(extraHotkey, () => {
+    console.log('全局快捷键触发（备用2）：', extraHotkey);
+    toggleWindow();
+  });
+
+  if (!ok1) console.error('主快捷键注册失败：', primaryHotkey);
+  if (!ok2) console.warn('备用快捷键注册失败：', fallbackHotkey);
+  if (!ok3) console.warn('备用快捷键注册失败：', extraHotkey);
+
+  console.log('快捷键状态:', {
+    [primaryHotkey]: globalShortcut.isRegistered(primaryHotkey),
+    [fallbackHotkey]: globalShortcut.isRegistered(fallbackHotkey),
+    [extraHotkey]: globalShortcut.isRegistered(extraHotkey)
+  });
+  console.log('应用已启动！按 Option+Space 或 Shift+Cmd/Ctrl+Space（或 F13）呼出侧边栏');
   
-  if (!ret) {
-    console.error('快捷键注册失败');
-  }
-  
-  console.log('快捷键已注册:', globalShortcut.isRegistered('Alt+Space'));
-  console.log('应用已启动！按 Option + Space 呼出侧边栏');
+  // ============== 截屏/文字 全局快捷键 ==============
+  const screenshotKey = process.platform === 'darwin' ? 'Command+Shift+K' : 'Control+Shift+K';
+  const textKey = process.platform === 'darwin' ? 'Command+Shift+Y' : 'Control+Shift+Y';
+  const gotShot = globalShortcut.register(screenshotKey, async () => {
+    console.log('截屏快捷键触发:', screenshotKey);
+    // 无闪烁截屏：启用内容保护，避免把本窗口捕获进去
+    try { mainWindow?.setContentProtection(true); } catch (_) {}
+    await new Promise(r=> setTimeout(r, 30));
+    const shot = await captureScreen();
+    try { mainWindow?.setContentProtection(false); } catch (_) {}
+    if (!isShowing) showWindow();
+    if (!shot) { mainWindow?.webContents.send('screenshot-error', 'capture-failed'); return; }
+    mainWindow?.webContents.send('screenshot-captured', { ...shot, autoPasted: true });
+    const res = await insertImageIntoCurrentView(shot.dataUrl);
+    mainWindow?.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
+  });
+  if (!gotShot) console.error('截图快捷键注册失败:', screenshotKey);
+
+  const gotText = globalShortcut.register(textKey, async () => {
+    console.log('文字选择快捷键触发:', textKey);
+    // 先尝试在当前聚焦应用执行复制，再读剪贴板
+    const text = await getSelectedTextAuto();
+    if (!text) { mainWindow?.webContents.send('selected-text-error', '未检测到剪贴板文字'); return; }
+    if (!isShowing) showWindow();
+    mainWindow?.webContents.send('selected-text', { text });
+    const res = await insertTextIntoCurrentView(text);
+    if (!res.ok) console.warn('insert text failed:', res.error);
+  });
+  if (!gotText) console.error('文字选择快捷键注册失败:', textKey);
   
   // 首次启动时显示窗口并加载默认 provider
   setTimeout(() => {
@@ -475,6 +1005,29 @@ app.on('activate', () => {
     createWindow();
   } else if (mainWindow) {
     showWindow();
+  }
+});
+
+// ============== 文件同步 IPC ==============
+ipcMain.on('sync-set-base', (e, dir) => {
+  try {
+    if (typeof dir === 'string' && dir.trim()) syncBaseDir = dir;
+    syncFolder(); // ensure exists
+  } catch (_) {}
+});
+ipcMain.on('sync-read', (e, payload) => {
+  const name = payload && payload.name;
+  const data = name ? readSyncFile(name) : null;
+  e.sender.send('sync-read-resp', { name, data });
+});
+ipcMain.on('sync-write', (e, payload) => {
+  try {
+    const name = payload && payload.name;
+    const data = payload && payload.data;
+    if (!name) return;
+    writeSyncFile(name, data);
+  } catch (err) {
+    console.error('sync-write error:', err);
   }
 });
 

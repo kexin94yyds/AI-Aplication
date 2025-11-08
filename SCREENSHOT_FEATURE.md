@@ -2,14 +2,16 @@
 
 ## ✨ 功能说明
 
-按下 `Cmd+Shift+K` (Mac) 或 `Ctrl+Shift+K` (Windows/Linux) 可以截取当前标签页的完整截图，**并直接加载到右侧 AI 聊天框中**，就像粘贴图片一样！
+按下 `Cmd+Shift+K` (Mac) 或 `Ctrl+Shift+K` (Windows/Linux) 可以截取当前标签页或屏幕的完整截图，**应用会自动将图片插入到右侧 AI 聊天框中**，无需手动粘贴。
 
 ## 🎯 使用方法
 
 1. **打开侧边栏**：点击扩展图标打开 AI 侧边栏
 2. **选择 AI**：选择你想使用的 AI（ChatGPT、Claude、Gemini 等）
 3. **截图**：在任意网页按下 `Cmd+Shift+K`
-4. **自动加载**：截图会自动插入到 AI 输入框中
+4. **自动加载**：
+   - 侧边栏会暂时透明以避免被截入
+   - 截图自动插入到 AI 输入框中
 5. **发送给 AI**：添加你的问题，然后发送给 AI 分析
 
 ## 🔧 技术实现
@@ -18,7 +20,10 @@
 
 我们实现了三种图片插入方法，按优先级尝试：
 
-#### 方法 1: 模拟粘贴事件 ⭐ 推荐
+#### 方法 1: 系统级粘贴（Electron webContents.paste）⭐ 推荐（应用版）
+通过 Electron 主进程将图片写入系统剪贴板，并在目标输入框获得焦点后调用 `webContents.paste()` 实现自动粘贴。
+
+#### 方法 2: 模拟粘贴事件（ClipboardEvent）
 ```javascript
 const pasteEvent = new ClipboardEvent('paste', {
   bubbles: true,
@@ -32,7 +37,7 @@ const pasteEvent = new ClipboardEvent('paste', {
 - ✅ **DeepSeek**: 支持
 - ✅ **Grok**: 支持
 
-#### 方法 2: 模拟拖放事件
+#### 方法 3: 模拟拖放事件
 ```javascript
 const dropEvent = new DragEvent('drop', {
   bubbles: true,
@@ -43,7 +48,7 @@ const dropEvent = new DragEvent('drop', {
 - 作为粘贴失败时的备用方案
 - 支持大部分现代 AI 聊天界面
 
-#### 方法 3: 文件上传按钮
+#### 方法 4: 文件上传按钮
 ```javascript
 uploadInput.files = dataTransfer.files;
 uploadInput.dispatchEvent(new Event('change'));
@@ -121,4 +126,3 @@ AI 输入框接收图片 ✅
 ---
 
 **享受截图功能吧！** 🎉
-

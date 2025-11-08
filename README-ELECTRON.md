@@ -72,11 +72,127 @@ npm start
 - 尝试重启应用
 - 检查开发者控制台是否有错误信息（npm run dev）
 
+## 打包与发布
+
+### 快速打包
+
+项目已配置好 `electron-builder`，支持一键打包：
+
+```bash
+# 1. 安装依赖（如果还没安装）
+npm install
+
+# 2. 快速验证（生成未打包的应用目录，不生成安装器）
+npm run pack
+
+# 3. 生成安装包/可执行文件
+npm run dist
+```
+
+### 打包输出
+
+#### macOS
+- **DMG 安装包**：`dist/AI Sidebar-*.dmg`
+- **ZIP 压缩包**：`dist/AI Sidebar-*.zip`
+- **未打包目录**：`dist/mac-arm64/AI Sidebar.app`
+
+#### Windows
+- **NSIS 安装包**：`dist/AI Sidebar Setup *.exe`
+- **未打包目录**：`dist/win-unpacked/`
+
+#### Linux
+- **AppImage**：`dist/AI Sidebar-*.AppImage`
+- **未打包目录**：`dist/linux-unpacked/`
+
+### 打包配置说明
+
+打包配置位于 `package.json` 的 `build` 字段：
+
+- **应用 ID**：`com.example.ai-sidebar`（可自定义）
+- **产品名称**：`AI Sidebar`
+- **分类**：macOS 为 `productivity`，Linux 为 `Utility`
+- **图标**：使用 `images/image.png`（1024x1024）
+- **文件包含**：仅包含运行所需文件（html/js/css/images/vendor 等）
+- **压缩**：已启用 `asar` 减小体积
+
+### macOS 权限说明
+
+#### 屏幕录制权限（截屏功能）
+首次使用截屏功能时，系统会要求授予"屏幕录制"权限：
+1. 系统设置 → 隐私与安全性 → 屏幕录制
+2. 勾选你的应用
+3. 重启应用
+
+#### 辅助功能权限（文字选择功能，可选）
+若希望"选中文字自动复制"功能更完善，需要"辅助功能"权限：
+1. 系统设置 → 隐私与安全性 → 辅助功能
+2. 勾选你的应用
+
+### 代码签名与公证（可选）
+
+#### 本地自用
+- 无需签名，直接使用打包的应用即可
+- macOS 首次打开可能提示"无法验证开发者"，在"系统设置 → 隐私与安全性"中点击"仍要打开"
+
+#### 分发给他人
+建议进行代码签名和公证，避免用户看到安全警告：
+
+1. **获取开发者证书**：
+   - 注册 Apple Developer 账号（$99/年）
+   - 在 Xcode 或 Apple Developer 网站创建证书
+
+2. **配置签名**：
+   在 `package.json` 的 `build.mac` 中添加：
+   ```json
+   "mac": {
+     "identity": "Developer ID Application: Your Name (TEAM_ID)"
+   }
+   ```
+
+3. **启用公证**（可选）：
+   ```json
+   "afterSign": "scripts/notarize.js"
+   ```
+   需要配置 Apple ID 和 App-Specific Password
+
+### 常见问题
+
+#### 图标问题
+- 当前使用 `images/image.png`（1024x1024）
+- 如需更清晰的图标，可替换为 `.icns`（macOS）或 `.ico`（Windows）
+- 图标文件需至少 512x512 像素
+
+#### 打包体积
+- 首次打包会较大（包含 Electron 运行时）
+- 已启用 `asar` 压缩减小体积
+- 可通过排除不必要的文件进一步优化
+
+#### 构建错误
+- **macOS**：确保安装了 Xcode Command Line Tools
+  ```bash
+  xcode-select --install
+  ```
+- **Windows**：需要允许 PowerShell 脚本执行
+- **Linux**：确保安装了必要的构建工具
+
+### 测试打包结果
+
+```bash
+# macOS
+open dist/mac-arm64/AI\ Sidebar.app
+
+# 或直接运行 DMG
+open dist/AI\ Sidebar-*.dmg
+```
+
 ## 下一步计划
 
 1. ✅ 基础原型（窗口 + 快捷键）
-2. 🔄 适配现有功能
-3. ⏳ 添加系统托盘
-4. ⏳ 自动更新功能
-5. ⏳ 打包发布
+2. ✅ 适配现有功能
+3. ✅ 截屏和文字选择功能
+4. ✅ 打包发布配置
+5. ⏳ 添加系统托盘
+6. ⏳ 自动更新功能
+7. ⏳ 代码签名和公证
+
 

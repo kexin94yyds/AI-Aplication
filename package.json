@@ -2,15 +2,64 @@
   "name": "ai-sidebar-app",
   "version": "1.0.0",
   "description": "全局 AI 侧边栏 - Mac 桌面应用",
+  "author": "AI Sidebar Team",
   "main": "electron-main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev"
+    "dev": "electron . --dev",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
   "dependencies": {
     "electron-store": "^8.1.0"
   },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^24.6.0"
+  },
+  "build": {
+    "appId": "com.example.ai-sidebar",
+    "productName": "AI Sidebar",
+    "files": [
+      "index.html",
+      "electron-main.js",
+      "electron-preload.js",
+      "electron-adapter.js",
+      "css/**",
+      "js/**",
+      "images/**",
+      "vendor/**",
+      "content-scripts/**",
+      "rules/**",
+      "!**/*.md",
+      "!repo-scp/**",
+      "!_metadata/**"
+    ],
+    "asar": true,
+    "extraMetadata": {
+      "main": "electron-main.js"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"],
+      "icon": "images/image.png"
+    },
+    "dmg": {
+      "sign": false
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "images/image.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Utility",
+      "icon": "images/image.png"
+    }
   }
 }
