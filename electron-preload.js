@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onEmbeddedBrowserUrlChanged: (callback) => {
     ipcRenderer.on('embedded-browser-url-changed', (event, data) => callback(data));
   },
+  navigateEmbeddedBrowser: (url) => {
+    ipcRenderer.send('navigate-embedded-browser', url);
+  },
   setSplitRatio: (ratio) => {
     ipcRenderer.send('set-split-ratio', ratio);
   },

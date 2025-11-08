@@ -1487,6 +1487,23 @@ const initializeBar = async () => {
     const backBtn = document.getElementById('backBtn');
     const splitDivider = document.getElementById('splitDivider');
     if (backBtn && IS_ELECTRON && window.electronAPI) {
+      // 计算顶部安全区域（工具栏等），用于：
+      // 1) 让分割线不要覆盖顶部 tab/工具栏
+      // 2) 通知主进程给 BrowserView 让出相同的顶部空间
+      const applyTopInset = () => {
+        try {
+          const toolbar = document.querySelector('.toolbar');
+          const rect = toolbar ? toolbar.getBoundingClientRect() : { top: 0, height: 48 };
+          // 在工具栏下方留 8px 透气
+          const inset = Math.round((rect.top || 0) + (rect.height || 48) + 8);
+          document.documentElement.style.setProperty('--divider-top', inset + 'px');
+          if (window.electronAPI?.setTopInset) window.electronAPI.setTopInset(inset);
+        } catch (_) {}
+      };
+      // 初始化与窗口变化时都更新一次
+      applyTopInset();
+      window.addEventListener('resize', applyTopInset);
+
       // 更新分割线位置的函数
       const updateDividerPositionFromRatio = (ratio) => {
         if (!splitDivider) return;
@@ -1499,11 +1516,66 @@ const initializeBar = async () => {
         splitDivider.style.left = `${sidebarWidth + splitPoint}px`;
       };
       
+      // 地址栏相关元素
+      const addressBar = document.getElementById('addressBar');
+      const addressInput = document.getElementById('addressInput');
+      const addressGo = document.getElementById('addressGo');
+      
+      // 判断输入是否为URL
+      const isValidUrl = (string) => {
+        try {
+          const url = new URL(string);
+          return url.protocol === 'http:' || url.protocol === 'https:';
+        } catch (_) {
+          // 检查是否包含常见的URL特征
+          return /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\./.test(string) || 
+                 string.startsWith('http://') || 
+                 string.startsWith('https://') ||
+                 string.startsWith('www.');
+        }
+      };
+      
+      // 将搜索词转换为搜索URL
+      const getSearchUrl = (query) => {
+        // 使用Google搜索作为默认搜索引擎
+        return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+      };
+      
+      // 处理地址栏导航
+      const handleAddressNavigation = () => {
+        if (!addressInput || !window.electronAPI) return;
+        
+        const inputValue = addressInput.value.trim();
+        if (!inputValue) return;
+        
+        let url = inputValue;
+        
+        // 如果不是有效的URL，则作为搜索查询
+        if (!isValidUrl(url)) {
+          url = getSearchUrl(url);
+        } else {
+          // 如果没有协议，添加https://
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+          }
+        }
+        
+        // 导航到URL
+        if (window.electronAPI.navigateEmbeddedBrowser) {
+          window.electronAPI.navigateEmbeddedBrowser(url);
+        }
+      };
+      
       // 显示/隐藏返回按钮和分屏指示器
       const showBackButton = () => {
         backBtn.style.display = 'inline-flex';
         if (splitDivider) {
           splitDivider.style.display = 'block';
+          // 确保分割线顶部与工具栏对齐
+          applyTopInset();
+          // 确保分隔线可以接收事件
+          splitDivider.style.pointerEvents = 'auto';
+          splitDivider.style.zIndex = '2147483647';
           // 立即更新分割线位置，确保与分屏比例同步
           setTimeout(() => {
             try {
@@ -1516,21 +1588,56 @@ const initializeBar = async () => {
             } catch (_) {}
           }, 50);
         }
+        // 显示地址栏
+        if (addressBar) {
+          addressBar.style.display = 'block';
+        }
       };
       const hideBackButton = () => {
         backBtn.style.display = 'none';
         if (splitDivider) {
           splitDivider.style.display = 'none';
         }
+        // 隐藏地址栏
+        if (addressBar) {
+          addressBar.style.display = 'none';
+        }
       };
       
       // 监听内嵌浏览器事件
-      window.electronAPI.onEmbeddedBrowserOpened?.(() => {
+      window.electronAPI.onEmbeddedBrowserOpened?.((data) => {
         showBackButton();
+        // 如果提供了URL，更新地址栏
+        if (data && data.url && addressInput) {
+          addressInput.value = data.url;
+        }
       });
       window.electronAPI.onEmbeddedBrowserClosed?.(() => {
         hideBackButton();
       });
+      
+      // 监听内嵌浏览器URL变化，更新地址栏
+      if (addressInput && window.electronAPI) {
+        window.electronAPI.onEmbeddedBrowserUrlChanged?.((data) => {
+          if (data && data.url && addressInput) {
+            addressInput.value = data.url;
+          }
+        });
+      }
+      
+      // 地址栏事件处理
+      if (addressInput && addressGo && window.electronAPI) {
+        // 点击"前往"按钮
+        addressGo.addEventListener('click', handleAddressNavigation);
+        
+        // 按Enter键导航
+        addressInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            handleAddressNavigation();
+          }
+        });
+      }
       
       // 返回按钮点击事件
       backBtn.addEventListener('click', () => {
@@ -1550,9 +1657,14 @@ const initializeBar = async () => {
       
       // 分割线拖动功能
       if (splitDivider && IS_ELECTRON && window.electronAPI) {
+        console.log('[Split Divider] Initializing drag functionality');
         let isDragging = false;
         let startX = 0;
         let startLeft = 0;
+        
+        // 确保分隔线可以接收事件
+        splitDivider.style.pointerEvents = 'auto';
+        splitDivider.style.zIndex = '2147483647';
         
         // 获取左侧导航栏的实际宽度（考虑折叠状态）
         const getSidebarWidth = () => {
@@ -1588,6 +1700,7 @@ const initializeBar = async () => {
         
         // 鼠标按下
         splitDivider.addEventListener('mousedown', (e) => {
+          console.log('[Split Divider] mousedown event triggered', e);
           isDragging = true;
           startX = e.clientX;
           const currentLeft = parseFloat(splitDivider.style.left);
@@ -1596,6 +1709,8 @@ const initializeBar = async () => {
           splitDivider.classList.add('dragging');
           e.preventDefault();
           e.stopPropagation();
+          // 确保分隔线在最上层
+          splitDivider.style.zIndex = '2147483647';
         });
         
         // 鼠标移动

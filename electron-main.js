@@ -15,6 +15,8 @@ let embeddedBrowserView = null; // 内嵌浏览器视图（用于显示链接）
 let previousBrowserView = null; // 保存打开内嵌浏览器前的 BrowserView
 let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
 let splitRatio = 0.5; // 分屏比例（0-1，0.5 表示各占一半）
+// 分割线命中区域（与渲染进程中的 .split-divider 保持一致）
+const DIVIDER_GUTTER = 24; // px，左右各一半作为留白，便于拖动
 // 自定义全宽模式（非系统原生全屏）
 let isFullWidth = false;
 let restoreBounds = null; // 记录进入全宽之前的窗口尺寸
@@ -490,15 +492,20 @@ function updateBrowserViewBounds() {
     // 分屏布局：左侧 AI 聊天，右侧内嵌浏览器
     // 使用保存的分屏比例
     const splitPoint = Math.floor(availableWidth * splitRatio);
-    // 限制最小宽度（左右各至少 200px）
+    // 限制最小宽度（左右各至少 200px），并为中间分割线预留命中区域
     const minWidth = 200;
-    const adjustedSplitPoint = Math.max(minWidth, Math.min(availableWidth - minWidth, splitPoint));
+    const halfG = Math.floor(DIVIDER_GUTTER / 2);
+    const adjustedSplitPoint = Math.max(
+      minWidth + halfG,
+      Math.min(availableWidth - (minWidth + halfG), splitPoint)
+    );
     
     // 左侧：AI 聊天视图（previousBrowserView）
+    // 左侧：为中间分割线预留 halfG 宽度
     previousBrowserView.setBounds({
       x: sidebarWidth,
       y: topBarHeight,
-      width: adjustedSplitPoint,
+      width: Math.max(minWidth, adjustedSplitPoint - halfG),
       height: availableHeight
     });
     previousBrowserView.setAutoResize({
@@ -507,10 +514,11 @@ function updateBrowserViewBounds() {
     });
     
     // 右侧：内嵌浏览器视图
+    // 右侧：同理从左边缘让出 halfG 宽度
     embeddedBrowserView.setBounds({
-      x: sidebarWidth + adjustedSplitPoint,
+      x: sidebarWidth + adjustedSplitPoint + halfG,
       y: topBarHeight,
-      width: availableWidth - adjustedSplitPoint,
+      width: Math.max(minWidth, availableWidth - adjustedSplitPoint - halfG),
       height: availableHeight
     });
     embeddedBrowserView.setAutoResize({
@@ -906,6 +914,25 @@ ipcMain.on('get-current-url', (event) => {
     event.reply('current-url', url);
   } else {
     event.reply('current-url', null);
+  }
+});
+
+// IPC 处理器：导航内嵌浏览器
+ipcMain.on('navigate-embedded-browser', (event, url) => {
+  if (!url || typeof url !== 'string') {
+    console.error('[Embedded Browser] Invalid URL for navigation:', url);
+    return;
+  }
+  if (!isEmbeddedBrowserActive || !embeddedBrowserView) {
+    console.warn('[Embedded Browser] Not active, opening new embedded browser');
+    openEmbeddedBrowser(url);
+    return;
+  }
+  console.log('[Embedded Browser] Navigating to:', url);
+  try {
+    embeddedBrowserView.webContents.loadURL(url);
+  } catch (e) {
+    console.error('[Embedded Browser] Navigation error:', e);
   }
 });
 
