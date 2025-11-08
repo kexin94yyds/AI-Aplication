@@ -77,3 +77,5 @@ async function getCurrentDisplayedUrl() {
 - `electron-preload.js` - IPC 接口（已存在，无需修改）
 - `electron-main.js` - 主进程处理（已存在，无需修改）
 
+
+

@@ -9,6 +9,12 @@ let isShowing = false;
 let currentBrowserView = null;
 const browserViews = {}; // 缓存所有 BrowserView
 let tray = null;
+let currentProviderKey = 'chatgpt'; // 跟踪当前 provider
+// 内嵌浏览器相关
+let embeddedBrowserView = null; // 内嵌浏览器视图（用于显示链接）
+let previousBrowserView = null; // 保存打开内嵌浏览器前的 BrowserView
+let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
+let splitRatio = 0.5; // 分屏比例（0-1，0.5 表示各占一半）
 // 自定义全宽模式（非系统原生全屏）
 let isFullWidth = false;
 let restoreBounds = null; // 记录进入全宽之前的窗口尺寸
@@ -333,15 +339,92 @@ function getOrCreateBrowserView(providerKey) {
         title: view.webContents.getTitle()
       });
     }
+    
+    // 链接拦截主要通过 will-navigate 事件处理，这里不需要注入脚本
+    // 注入脚本可能会干扰正常的链接行为，移除它
   });
 
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error(`BrowserView failed to load ${providerKey}:`, errorCode, errorDescription);
   });
+  
+  // 链接拦截通过 will-navigate 事件处理
+  
+  // 拦截导航事件（当用户点击链接时）
+  // 注意：这个事件会在所有导航时触发，包括内部导航
+  // 我们需要小心处理，避免拦截内部导航
+  view.webContents.on('will-navigate', (event, navigationUrl) => {
+    // 只在非内嵌浏览器激活时拦截
+    if (isEmbeddedBrowserActive) {
+      return; // 允许内嵌浏览器正常导航
+    }
+    
+    // 检查是否是外部链接
+    try {
+      const currentUrlStr = view.webContents.getURL();
+      if (!currentUrlStr || currentUrlStr === 'about:blank') {
+        return; // 当前 URL 无效，允许导航
+      }
+      
+      const currentUrl = new URL(currentUrlStr);
+      const navUrl = new URL(navigationUrl);
+      
+      // 如果是外部链接（不同域名），拦截并打开内嵌浏览器
+      if (navUrl.origin !== currentUrl.origin) {
+        event.preventDefault();
+        console.log('[Link Interceptor] External link detected, opening in embedded browser:', navigationUrl);
+        openEmbeddedBrowser(navigationUrl);
+      }
+      // 同域名的导航允许继续（内部链接）
+    } catch (e) {
+      // URL 解析失败，可能是特殊协议（如 about:blank），允许导航
+      console.log('[Link Interceptor] URL parse failed, allowing navigation:', e.message);
+    }
+  });
+  
+  // 拦截新窗口打开（window.open）
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      // 打开内嵌浏览器而不是新窗口
+      openEmbeddedBrowser(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  // 捕获 BrowserView 内部的 Tab 键，支持在输入框内也一键切换 AI（含 Shift+Tab 反向）
+  if (!view.__aisbTabHooked) {
+    view.__aisbTabHooked = true;
+    try {
+      view.webContents.on('before-input-event', (event, input) => {
+        try {
+          if (input && input.type === 'keyDown' && input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
+            // 阻止 Tab 传给站点本身，转为切换 Provider
+            event.preventDefault();
+            const dir = input.shift ? -1 : 1;
+            cycleToNextProvider(dir);
+          }
+        } catch (_) {}
+      });
+    } catch (e) {
+      console.warn('Failed to hook before-input-event for BrowserView:', providerKey, e);
+    }
+  }
 
   // 缓存
   browserViews[providerKey] = view;
   return view;
+}
+
+// 循环切换到下一个 provider（由渲染进程调用）
+function cycleToNextProvider(dir = 1) {
+  if (!mainWindow) return;
+  // 通过 IPC 通知渲染进程执行切换，并带上方向（1=下一个，-1=上一个）
+  try {
+    mainWindow.webContents.send('cycle-provider', { dir: dir >= 0 ? 1 : -1 });
+  } catch (e) {
+    console.error('cycleToNextProvider send failed:', e);
+  }
 }
 
 // 切换到指定的 provider
@@ -373,6 +456,7 @@ function switchToProvider(providerKey) {
   // 添加新视图（若当前处于覆盖模式，则先不添加，仅记录，待退出覆盖时再 attach）
   try {
     currentBrowserView = view;
+    currentProviderKey = providerKey; // 更新当前 provider
     if (overlayDepth > 0) {
       console.log('Overlay active; defer addBrowserView for:', providerKey);
     } else {
@@ -389,7 +473,7 @@ function switchToProvider(providerKey) {
 
 // 更新 BrowserView 的边界
 function updateBrowserViewBounds() {
-  if (!mainWindow || !currentBrowserView) return;
+  if (!mainWindow) return;
 
   const bounds = mainWindow.getContentBounds();
   
@@ -398,27 +482,78 @@ function updateBrowserViewBounds() {
   // 顶部留出空间给工具栏/面板
   const topBarHeight = Math.max(0, Math.floor(topInset || 0));
   
-  // 设置 BrowserView 的边界
-  currentBrowserView.setBounds({
-    x: sidebarWidth,
-    y: topBarHeight,
-    width: bounds.width - sidebarWidth,
-    height: bounds.height - topBarHeight
-  });
-
-  // 禁用自动调整，完全由手动控制
-  // 这样可以防止窗口大小变化时页面自动滚动到顶部
-  currentBrowserView.setAutoResize({
-    width: false,
-    height: false
-  });
+  const availableWidth = bounds.width - sidebarWidth;
+  const availableHeight = bounds.height - topBarHeight;
   
-  console.log('Updated BrowserView bounds:', {
-    x: sidebarWidth,
-    y: topBarHeight,
-    width: bounds.width - sidebarWidth,
-    height: bounds.height - topBarHeight
-  });
+  // 如果内嵌浏览器激活，实现分屏布局
+  if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
+    // 分屏布局：左侧 AI 聊天，右侧内嵌浏览器
+    // 使用保存的分屏比例
+    const splitPoint = Math.floor(availableWidth * splitRatio);
+    // 限制最小宽度（左右各至少 200px）
+    const minWidth = 200;
+    const adjustedSplitPoint = Math.max(minWidth, Math.min(availableWidth - minWidth, splitPoint));
+    
+    // 左侧：AI 聊天视图（previousBrowserView）
+    previousBrowserView.setBounds({
+      x: sidebarWidth,
+      y: topBarHeight,
+      width: adjustedSplitPoint,
+      height: availableHeight
+    });
+    previousBrowserView.setAutoResize({
+      width: false,
+      height: false
+    });
+    
+    // 右侧：内嵌浏览器视图
+    embeddedBrowserView.setBounds({
+      x: sidebarWidth + adjustedSplitPoint,
+      y: topBarHeight,
+      width: availableWidth - adjustedSplitPoint,
+      height: availableHeight
+    });
+    embeddedBrowserView.setAutoResize({
+      width: false,
+      height: false
+    });
+    
+    console.log('[Split View] AI chat (left):', {
+      x: sidebarWidth,
+      y: topBarHeight,
+      width: adjustedSplitPoint,
+      height: availableHeight,
+      ratio: splitRatio
+    });
+    console.log('[Split View] Embedded browser (right):', {
+      x: sidebarWidth + adjustedSplitPoint,
+      y: topBarHeight,
+      width: availableWidth - adjustedSplitPoint,
+      height: availableHeight
+    });
+  } else if (currentBrowserView) {
+    // 正常全屏布局：只有 AI 聊天视图
+    currentBrowserView.setBounds({
+      x: sidebarWidth,
+      y: topBarHeight,
+      width: availableWidth,
+      height: availableHeight
+    });
+
+    // 禁用自动调整，完全由手动控制
+    // 这样可以防止窗口大小变化时页面自动滚动到顶部
+    currentBrowserView.setAutoResize({
+      width: false,
+      height: false
+    });
+    
+    console.log('Updated BrowserView bounds (full-screen):', {
+      x: sidebarWidth,
+      y: topBarHeight,
+      width: availableWidth,
+      height: availableHeight
+    });
+  }
 }
 
 // 切换窗口为全宽/恢复
@@ -633,6 +768,138 @@ ipcMain.on('open-in-browser', (event, url) => {
   }
 });
 
+// ============== 内嵌浏览器功能 ==============
+// 打开内嵌浏览器（分屏显示：左侧 AI 聊天，右侧链接页面）
+function openEmbeddedBrowser(url) {
+  if (!mainWindow) {
+    console.error('Cannot open embedded browser: mainWindow is null');
+    return;
+  }
+
+  try {
+    // 保存当前的 BrowserView（AI 聊天视图）
+    if (currentBrowserView && !isEmbeddedBrowserActive) {
+      previousBrowserView = currentBrowserView;
+      // 不隐藏，保持显示在左侧
+    }
+
+    // 创建或重用内嵌浏览器视图
+    if (!embeddedBrowserView) {
+      embeddedBrowserView = new BrowserView({
+        webPreferences: {
+          partition: 'persist:embedded-browser',
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          enableRemoteModule: false,
+        }
+      });
+
+      // 监听导航事件
+      embeddedBrowserView.webContents.on('did-navigate', (event, navigationUrl) => {
+        console.log('[Embedded Browser] Navigated to:', navigationUrl);
+        mainWindow?.webContents.send('embedded-browser-url-changed', { url: navigationUrl });
+      });
+
+      embeddedBrowserView.webContents.on('did-navigate-in-page', (event, navigationUrl) => {
+        console.log('[Embedded Browser] In-page navigation to:', navigationUrl);
+        mainWindow?.webContents.send('embedded-browser-url-changed', { url: navigationUrl });
+      });
+
+      // 监听加载完成
+      embeddedBrowserView.webContents.on('did-finish-load', () => {
+        console.log('[Embedded Browser] Page loaded');
+        mainWindow?.webContents.send('embedded-browser-loaded');
+      });
+    }
+
+    // 加载 URL
+    embeddedBrowserView.webContents.loadURL(url);
+    isEmbeddedBrowserActive = true;
+
+    // 添加到窗口（与 AI 聊天视图同时显示）
+    if (overlayDepth > 0) {
+      console.log('[Embedded Browser] Overlay active; defer addBrowserView');
+    } else {
+      mainWindow.addBrowserView(embeddedBrowserView);
+      updateBrowserViewBounds(); // 更新两个视图的边界，实现分屏
+    }
+
+    // 通知渲染进程
+    mainWindow.webContents.send('embedded-browser-opened', { url });
+    console.log('[Embedded Browser] Opened in split view:', url);
+  } catch (e) {
+    console.error('[Embedded Browser] Error opening:', e);
+  }
+}
+
+// 关闭内嵌浏览器，恢复全屏显示 AI 聊天
+function closeEmbeddedBrowser() {
+  if (!isEmbeddedBrowserActive || !embeddedBrowserView) {
+    return;
+  }
+
+  try {
+    // 移除内嵌浏览器视图
+    if (mainWindow && embeddedBrowserView) {
+      mainWindow.removeBrowserView(embeddedBrowserView);
+    }
+
+    // 恢复之前的 BrowserView（AI 聊天视图）为全屏
+    if (previousBrowserView && mainWindow) {
+      currentBrowserView = previousBrowserView;
+      // 确保 AI 聊天视图已添加到窗口（如果之前被移除了）
+      try {
+        const views = mainWindow.getBrowserViews();
+        if (!views.includes(previousBrowserView)) {
+          mainWindow.addBrowserView(previousBrowserView);
+        }
+      } catch (e) {
+        console.warn('[Embedded Browser] Error checking/adding previous view:', e);
+      }
+      
+      if (overlayDepth > 0) {
+        console.log('[Embedded Browser] Overlay active; defer restore BrowserView');
+      } else {
+        updateBrowserViewBounds(); // 恢复全屏布局
+      }
+    }
+
+    isEmbeddedBrowserActive = false;
+    previousBrowserView = null;
+
+    // 通知渲染进程
+    mainWindow?.webContents.send('embedded-browser-closed');
+    console.log('[Embedded Browser] Closed, restored full-screen AI chat');
+  } catch (e) {
+    console.error('[Embedded Browser] Error closing:', e);
+  }
+}
+
+// IPC 处理器：打开内嵌浏览器
+ipcMain.on('open-embedded-browser', (event, url) => {
+  if (!url || typeof url !== 'string') {
+    console.error('[Embedded Browser] Invalid URL:', url);
+    return;
+  }
+  openEmbeddedBrowser(url);
+});
+
+// IPC 处理器：关闭内嵌浏览器
+ipcMain.on('close-embedded-browser', () => {
+  closeEmbeddedBrowser();
+});
+
+// IPC 处理器：从 BrowserView 内部打开内嵌浏览器（由注入的脚本触发）
+ipcMain.on('open-embedded-browser-from-view', (event, url) => {
+  if (!url || typeof url !== 'string') {
+    console.error('[Embedded Browser] Invalid URL from view:', url);
+    return;
+  }
+  console.log('[Embedded Browser] Opening from BrowserView:', url);
+  openEmbeddedBrowser(url);
+});
+
 ipcMain.on('get-current-url', (event) => {
   if (currentBrowserView) {
     const url = currentBrowserView.webContents.getURL();
@@ -640,6 +907,11 @@ ipcMain.on('get-current-url', (event) => {
   } else {
     event.reply('current-url', null);
   }
+});
+
+// Tab 键切换 provider（由渲染进程触发）
+ipcMain.on('cycle-provider-next', () => {
+  cycleToNextProvider();
 });
 
 // 全宽切换与状态查询
@@ -661,6 +933,20 @@ ipcMain.on('set-top-inset', (event, px) => {
       updateBrowserViewBounds();
     }
   } catch (_) {}
+});
+
+// 设置分屏比例（0-1，0.5 表示各占一半）
+ipcMain.on('set-split-ratio', (event, ratio) => {
+  try {
+    const newRatio = Math.max(0.2, Math.min(0.8, parseFloat(ratio || 0.5)));
+    if (newRatio !== splitRatio) {
+      splitRatio = newRatio;
+      updateBrowserViewBounds();
+      console.log('[Split View] Ratio updated to:', splitRatio);
+    }
+  } catch (e) {
+    console.error('[Split View] Error setting ratio:', e);
+  }
 });
 
 // 覆盖模式 IPC

@@ -24,6 +24,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('open-in-browser', url);
   },
   
+  // 内嵌浏览器功能
+  openEmbeddedBrowser: (url) => {
+    ipcRenderer.send('open-embedded-browser', url);
+  },
+  closeEmbeddedBrowser: () => {
+    ipcRenderer.send('close-embedded-browser');
+  },
+  onEmbeddedBrowserOpened: (callback) => {
+    ipcRenderer.on('embedded-browser-opened', (event, data) => callback(data));
+  },
+  onEmbeddedBrowserClosed: (callback) => {
+    ipcRenderer.on('embedded-browser-closed', () => callback());
+  },
+  onEmbeddedBrowserUrlChanged: (callback) => {
+    ipcRenderer.on('embedded-browser-url-changed', (event, data) => callback(data));
+  },
+  setSplitRatio: (ratio) => {
+    ipcRenderer.send('set-split-ratio', ratio);
+  },
+  
   // 获取当前 BrowserView 的 URL
   getCurrentUrl: () => {
     return new Promise((resolve) => {
@@ -115,6 +135,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAlwaysOnTopChanged: (callback) => {
     ipcRenderer.on('always-on-top-changed', (event, status) => {
       callback(status);
+    });
+  },
+  
+  // Tab 键切换 provider（支持方向）
+  onCycleProvider: (callback) => {
+    ipcRenderer.on('cycle-provider', (event, payload) => {
+      try { callback(payload); } catch (_) { callback && callback(); }
     });
   },
 

@@ -1482,6 +1482,225 @@ const initializeBar = async () => {
   // 初始化星号按钮状态（移除 Open in Tab 后依旧可用）
   await updateStarButtonState();
 
+  // 内嵌浏览器返回按钮和分屏指示器
+  try {
+    const backBtn = document.getElementById('backBtn');
+    const splitDivider = document.getElementById('splitDivider');
+    if (backBtn && IS_ELECTRON && window.electronAPI) {
+      // 更新分割线位置的函数
+      const updateDividerPositionFromRatio = (ratio) => {
+        if (!splitDivider) return;
+        // 获取左侧导航栏的实际宽度（考虑折叠状态）
+        const providerTabs = document.getElementById('provider-tabs');
+        const sidebarWidth = providerTabs && providerTabs.classList.contains('collapsed') ? 0 : 60;
+        const availableWidth = window.innerWidth - sidebarWidth;
+        const splitPoint = availableWidth * ratio;
+        // 确保分隔线位置精确对齐
+        splitDivider.style.left = `${sidebarWidth + splitPoint}px`;
+      };
+      
+      // 显示/隐藏返回按钮和分屏指示器
+      const showBackButton = () => {
+        backBtn.style.display = 'inline-flex';
+        if (splitDivider) {
+          splitDivider.style.display = 'block';
+          // 立即更新分割线位置，确保与分屏比例同步
+          setTimeout(() => {
+            try {
+              const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+              updateDividerPositionFromRatio(savedRatio);
+              // 通知主进程同步分屏比例
+              if (window.electronAPI?.setSplitRatio) {
+                window.electronAPI.setSplitRatio(savedRatio);
+              }
+            } catch (_) {}
+          }, 50);
+        }
+      };
+      const hideBackButton = () => {
+        backBtn.style.display = 'none';
+        if (splitDivider) {
+          splitDivider.style.display = 'none';
+        }
+      };
+      
+      // 监听内嵌浏览器事件
+      window.electronAPI.onEmbeddedBrowserOpened?.(() => {
+        showBackButton();
+      });
+      window.electronAPI.onEmbeddedBrowserClosed?.(() => {
+        hideBackButton();
+      });
+      
+      // 返回按钮点击事件
+      backBtn.addEventListener('click', () => {
+        if (window.electronAPI?.closeEmbeddedBrowser) {
+          window.electronAPI.closeEmbeddedBrowser();
+        }
+      });
+      
+      // Esc 键关闭内嵌浏览器
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && backBtn.style.display !== 'none') {
+          if (window.electronAPI?.closeEmbeddedBrowser) {
+            window.electronAPI.closeEmbeddedBrowser();
+          }
+        }
+      });
+      
+      // 分割线拖动功能
+      if (splitDivider && IS_ELECTRON && window.electronAPI) {
+        let isDragging = false;
+        let startX = 0;
+        let startLeft = 0;
+        
+        // 获取左侧导航栏的实际宽度（考虑折叠状态）
+        const getSidebarWidth = () => {
+          const providerTabs = document.getElementById('provider-tabs');
+          return providerTabs && providerTabs.classList.contains('collapsed') ? 0 : 60;
+        };
+        
+        // 更新分割线位置（从比例计算）
+        const updateDividerPosition = (ratio) => {
+          if (splitDivider && splitDivider.style.display !== 'none') {
+            const currentSidebarWidth = getSidebarWidth();
+            const availableWidth = window.innerWidth - currentSidebarWidth;
+            const splitPoint = availableWidth * ratio;
+            splitDivider.style.left = `${currentSidebarWidth + splitPoint}px`;
+          }
+        };
+        
+        // 从位置计算分屏比例
+        const calculateRatioFromPosition = (leftPosition) => {
+          const currentSidebarWidth = getSidebarWidth();
+          const availableWidth = window.innerWidth - currentSidebarWidth;
+          const relativeX = leftPosition - currentSidebarWidth;
+          return Math.max(0.2, Math.min(0.8, relativeX / availableWidth));
+        };
+        
+        // 从鼠标位置计算分屏比例
+        const calculateRatioFromMouseX = (mouseX) => {
+          const currentSidebarWidth = getSidebarWidth();
+          const availableWidth = window.innerWidth - currentSidebarWidth;
+          const relativeX = mouseX - currentSidebarWidth;
+          return Math.max(0.2, Math.min(0.8, relativeX / availableWidth));
+        };
+        
+        // 鼠标按下
+        splitDivider.addEventListener('mousedown', (e) => {
+          isDragging = true;
+          startX = e.clientX;
+          const currentLeft = parseFloat(splitDivider.style.left);
+          const currentSidebarWidth = getSidebarWidth();
+          startLeft = currentLeft || (currentSidebarWidth + (window.innerWidth - currentSidebarWidth) * 0.5);
+          splitDivider.classList.add('dragging');
+          e.preventDefault();
+          e.stopPropagation();
+        });
+        
+        // 鼠标移动
+        const handleMouseMove = (e) => {
+          if (!isDragging) return;
+          
+          const currentSidebarWidth = getSidebarWidth();
+          const deltaX = e.clientX - startX;
+          const newLeft = startLeft + deltaX;
+          
+          // 限制在有效范围内
+          const availableWidth = window.innerWidth - currentSidebarWidth;
+          const minLeft = currentSidebarWidth + availableWidth * 0.2;
+          const maxLeft = currentSidebarWidth + availableWidth * 0.8;
+          const clampedLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
+          
+          const ratio = calculateRatioFromPosition(clampedLeft);
+          
+          // 更新分割线位置
+          splitDivider.style.left = `${clampedLeft}px`;
+          splitDivider.style.transition = 'none'; // 拖动时禁用过渡
+          
+          // 通知主进程更新分屏比例
+          if (window.electronAPI?.setSplitRatio) {
+            window.electronAPI.setSplitRatio(ratio);
+          }
+        };
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        
+        // 鼠标释放
+        const handleMouseUp = () => {
+          if (isDragging) {
+            isDragging = false;
+            splitDivider.classList.remove('dragging');
+            splitDivider.style.transition = ''; // 恢复过渡效果
+            
+            // 保存分屏比例到本地存储
+            try {
+              const currentLeft = parseFloat(splitDivider.style.left);
+              const ratio = calculateRatioFromPosition(currentLeft);
+              localStorage.setItem('splitRatio', ratio.toString());
+              console.log('[Split Divider] Saved ratio:', ratio);
+            } catch (e) {
+              console.error('[Split Divider] Error saving ratio:', e);
+            }
+          }
+        };
+        
+        document.addEventListener('mouseup', handleMouseUp);
+        
+        // 窗口大小变化时更新分割线位置
+        const handleResize = () => {
+          if (splitDivider.style.display !== 'none') {
+            try {
+              const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+              updateDividerPosition(savedRatio);
+              if (window.electronAPI?.setSplitRatio) {
+                window.electronAPI.setSplitRatio(savedRatio);
+              }
+            } catch (_) {}
+          }
+        };
+        
+        window.addEventListener('resize', handleResize);
+        
+        // 监听导航栏折叠状态变化，更新分隔线位置
+        const providerTabs = document.getElementById('provider-tabs');
+        if (providerTabs) {
+          const observer = new MutationObserver(() => {
+            if (splitDivider.style.display !== 'none') {
+              try {
+                const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+                updateDividerPosition(savedRatio);
+                if (window.electronAPI?.setSplitRatio) {
+                  window.electronAPI.setSplitRatio(savedRatio);
+                }
+              } catch (_) {}
+            }
+          });
+          observer.observe(providerTabs, {
+            attributes: true,
+            attributeFilter: ['class']
+          });
+        }
+        
+        // 内嵌浏览器打开时，恢复保存的分屏比例
+        window.electronAPI.onEmbeddedBrowserOpened?.(() => {
+          setTimeout(() => {
+            try {
+              const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+              updateDividerPosition(savedRatio);
+              if (window.electronAPI?.setSplitRatio) {
+                window.electronAPI.setSplitRatio(savedRatio);
+              }
+              console.log('[Split Divider] Restored ratio on open:', savedRatio);
+            } catch (e) {
+              console.error('[Split Divider] Error restoring ratio:', e);
+            }
+          }, 100);
+        });
+      }
+    }
+  } catch (_) {}
+
   // Open in Tab 按钮点击事件
   try {
     const openInTabBtn = document.getElementById('openInTab');
@@ -2150,6 +2369,17 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onBrowserViewUrlChan
 
 initializeBar();
 
+// Tab 键切换：监听主进程的切换请求
+if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
+  window.electronAPI.onCycleProvider((data) => {
+    // 调用已有的 cycleProvider 函数，支持方向（默认下一个）
+    const dir = (data && typeof data.dir === 'number') ? data.dir : 1;
+    if (window.__AIPanelCycleProvider) {
+      window.__AIPanelCycleProvider(dir >= 0 ? 1 : -1);
+    }
+  });
+}
+
 // ============== 来自后台的消息与待处理队列 ==============
 (function initRuntimeMessages() {
   function getActiveProviderFrame() {
@@ -2478,9 +2708,8 @@ initializeBar();
     }
   }
 
-  // 监听 ESC 键关闭搜索
+  // 仅监听 ESC 关闭搜索（Tab 切换由全局处理，且支持 BrowserView 捕获）
   document.addEventListener('keydown', (e) => {
-    // ESC 关闭搜索
     if (e.key === 'Escape' && isSearchVisible) {
       toggleSearch();
     }

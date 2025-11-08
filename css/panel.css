@@ -330,6 +330,26 @@ html {
   color: #000000;
 }
 
+/* Back button - 返回按钮 */
+.toolbar button#backBtn {
+  flex: 0 0 auto;
+  padding: 0 12px;
+  font-size: 13px;
+  background: linear-gradient(135deg, var(--btn-blue-start), var(--btn-blue-end));
+  border-color: var(--btn-blue-border);
+  color: #ffffff;
+  box-shadow: 0 4px 14px var(--btn-blue-shadow);
+}
+.toolbar button#backBtn:hover {
+  background: linear-gradient(135deg, var(--btn-blue-end), var(--btn-blue-start));
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px var(--btn-blue-shadow);
+}
+.toolbar button#backBtn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px var(--btn-blue-shadow);
+}
+
 /* Search button - active state */
 .toolbar button#searchBtn.active {
   background: linear-gradient(135deg, var(--btn-blue-start), var(--btn-blue-end));
@@ -516,8 +536,7 @@ html {
 }
 
 /* Reveal toolbar when hovering top edge or toolbar itself */
-.hover-zone:hover ~ .toolbar,
-.toolbar:hover { /* 保持固定显示，不再依赖 hover */ }
+/* 保持固定显示，不再依赖 hover */
 
 /* 中间用于拖动的空白区域 */
 .toolbar-spacer {
@@ -527,6 +546,68 @@ html {
   -webkit-app-region: drag;
   cursor: move;
 }
+
+/* 分屏分割线指示器 - 可拖动 */
+.split-divider {
+  position: fixed; /* 使用 fixed 确保相对于视口定位，不受父元素影响 */
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  z-index: 2147483647; /* 最高层级，确保在所有内容之上 */
+  pointer-events: auto;
+  cursor: col-resize;
+  /* 初始位置通过 JavaScript 动态设置，不在这里设置固定值 */
+  left: 0;
+  transition: background-color 0.2s ease, width 0.2s ease, left 0.1s ease;
+  /* 使用纯色背景，确保线条清晰 */
+  background: rgba(90, 132, 255, 0.3);
+  border-left: none;
+  border-right: none;
+  /* 添加阴影增强可见性 */
+  box-shadow: 0 0 0 1px rgba(90, 132, 255, 0.2);
+  /* 扩大可点击区域，使用伪元素创建更大的点击区域 */
+  padding: 0;
+  margin: 0;
+}
+
+/* 使用 ::before 伪元素扩大可点击区域 */
+.split-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -8px; /* 向左扩展8px */
+  right: -8px; /* 向右扩展8px */
+  bottom: 0;
+  cursor: col-resize;
+  /* 背景透明，但可以接收鼠标事件 */
+  background: transparent;
+}
+
+.split-divider:hover {
+  background: rgba(90, 132, 255, 0.5);
+  width: 6px;
+  box-shadow: 0 0 0 1px rgba(90, 132, 255, 0.4);
+}
+
+.split-divider:hover::before {
+  left: -10px; /* hover时扩大点击区域 */
+  right: -10px;
+}
+
+.split-divider.dragging {
+  background: rgba(90, 132, 255, 0.6);
+  width: 6px;
+  box-shadow: 0 0 0 2px rgba(90, 132, 255, 0.6);
+  cursor: col-resize;
+  transition: none; /* 拖动时禁用过渡 */
+}
+
+.split-divider.dragging::before {
+  left: -10px;
+  right: -10px;
+}
+
+/* 移除 ::before 伪元素，避免多余的横线 */
 
 /* toolbar buttons removed */
 
