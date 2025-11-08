@@ -157,8 +157,8 @@ if (window.electronAPI) {
       
       // 主进程会尝试自动粘贴
       const tip = autoPasted
-        ? '✅ 截图已捕获，正在自动插入到输入框…'
-        : '✅ 截图已捕获！若未出现请 Cmd/Ctrl+V 粘贴';
+        ? '截图已捕获，正在自动插入到输入框…'
+        : '截图已捕获！若未出现请 Cmd/Ctrl+V 粘贴';
       showToast(tip, 'info');
     } catch (e) {
       console.error('发送截图失败:', e);
@@ -176,7 +176,7 @@ if (window.electronAPI) {
       
       // 显示前几个字符作为预览
       const preview = text.length > 50 ? (text.substring(0, 50) + '...') : text;
-      showToast('✅ 文字已自动插入到输入框！预览: ' + preview, 'info');
+      showToast('文字已自动插入到输入框！预览: ' + preview, 'info');
     } catch (e) {
       console.error('发送文字失败:', e);
       showToast('发送文字失败', 'error');
@@ -212,7 +212,7 @@ if (window.electronAPI) {
   window.electronAPI.onScreenshotPasteResult?.((res) => {
     if (!res) return;
     if (res.ok) {
-      showToast('✅ 图片已自动插入到输入框', 'info');
+      showToast('图片已自动插入到输入框', 'info');
     } else {
       showToast('⚠️ 未能自动插入图片，请按 Cmd/Ctrl+V 粘贴', 'warn');
     }

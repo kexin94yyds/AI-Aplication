@@ -157,8 +157,10 @@ const PROVIDERS = {
 
 // Debug logging helper (set to false to silence in production)
 const DEBUG = true;
-// 镜像模式：以插件 sync/*.json 为唯一真源，不向 sync 写回，不自动追加历史
-const SYNC_MIRROR_FROM_PLUGIN = true;
+// 镜像模式：Electron 应用从插件的 sync/*.json 读取数据（只读模式）
+// 浏览器插件则正常写入 sync/*.json（写入模式）
+// 这样实现：浏览器插件 → sync 文件 → Electron 应用 的数据流
+const SYNC_MIRROR_FROM_PLUGIN = IS_ELECTRON; // Electron=只读，插件=写入
 try { window.AI_SYNC_WRITE_ENABLED = !SYNC_MIRROR_FROM_PLUGIN; } catch (_) {}
 const dbg = (...args) => { try { if (DEBUG) console.log('[AISidebar]', ...args); } catch (_) {} };
 
@@ -525,7 +527,7 @@ async function renderHistoryPanel() {
         </span>
       </div>`;
     }).join('');
-    panel.innerHTML = `<div class=\"hp-header\">\n      <span>History</span>\n      <span class=\"hp-actions\">\n        <button id=\"hp-add-current\">Add Current</button>\n        <button id=\"hp-clear-all\">Clear</button>\n        <button id=\"hp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"hp-search-row\">\n      <span class=\"hp-search-icon\">🔍</span>\n      <input id=\"hp-search-input\" class=\"hp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"hp-list\">${rows || ''}</div>`;
+    panel.innerHTML = `<div class=\"hp-header\">\n      <span>History</span>\n      <span class=\"hp-actions\">\n        <button id=\"hp-add-current\">Add Current</button>\n        <button id=\"hp-clear-all\">Clear</button>\n        <button id=\"hp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"hp-search-row\">\n      <span class=\"hp-search-icon\"></span>\n      <input id=\"hp-search-input\" class=\"hp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"hp-list\">${rows || ''}</div>`;
     // events
     panel.querySelector('#hp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
     panel.querySelector('#hp-clear-all')?.addEventListener('click', async ()=>{ await saveHistory([]); renderHistoryPanel(); });
@@ -884,7 +886,7 @@ async function renderFavoritesPanel() {
         </span>
       </div>`;
     }).join('');
-    panel.innerHTML = `<div class=\"fp-header\">\n      <span>Favorites</span>\n      <span class=\"fp-actions\">\n        <button id=\"fp-add-current\">Add Current</button>\n        <button id=\"fp-clear-all\">Clear</button>\n        <button id=\"fp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"fp-search-row\">\n      <span class=\"fp-search-icon\">🔍</span>\n      <input id=\"fp-search-input\" class=\"fp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"fp-list\">${rows || ''}</div>`;
+    panel.innerHTML = `<div class=\"fp-header\">\n      <span>Favorites</span>\n      <span class=\"fp-actions\">\n        <button id=\"fp-add-current\">Add Current</button>\n        <button id=\"fp-clear-all\">Clear</button>\n        <button id=\"fp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"fp-search-row\">\n      <span class=\"fp-search-icon\"></span>\n      <input id=\"fp-search-input\" class=\"fp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"fp-list\">${rows || ''}</div>`;
 
     panel.querySelector('#fp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
     panel.querySelector('#fp-clear-all')?.addEventListener('click', async ()=>{ await saveFavorites([]); renderFavoritesPanel(); });
