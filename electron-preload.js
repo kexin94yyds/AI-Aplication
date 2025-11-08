@@ -83,6 +83,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     try { ipcRenderer.send('set-top-inset', Math.max(0, Math.floor(px||0))); } catch (_) {}
   },
 
+  // 覆盖模式：临时隐藏 BrowserView，让面板真正浮在上面
+  enterOverlay: () => { try { ipcRenderer.send('overlay-enter'); } catch(_){} },
+  exitOverlay: () => { try { ipcRenderer.send('overlay-exit'); } catch(_){} },
+
   // 全宽切换（非操作系统原生全屏，保持当前 Space）
   toggleFullWidth: () => {
     ipcRenderer.send('toggle-full-width');

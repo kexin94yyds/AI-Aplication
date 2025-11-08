@@ -527,7 +527,7 @@ async function renderHistoryPanel() {
     }).join('');
     panel.innerHTML = `<div class=\"hp-header\">\n      <span>History</span>\n      <span class=\"hp-actions\">\n        <button id=\"hp-add-current\">Add Current</button>\n        <button id=\"hp-clear-all\">Clear</button>\n        <button id=\"hp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"hp-search-row\">\n      <span class=\"hp-search-icon\">🔍</span>\n      <input id=\"hp-search-input\" class=\"hp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"hp-list\">${rows || ''}</div>`;
     // events
-    panel.querySelector('#hp-close')?.addEventListener('click', ()=> panel.style.display='none');
+    panel.querySelector('#hp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
     panel.querySelector('#hp-clear-all')?.addEventListener('click', async ()=>{ await saveHistory([]); renderHistoryPanel(); });
     panel.querySelector('#hp-add-current')?.addEventListener('click', async ()=>{
       try {
@@ -550,6 +550,8 @@ async function renderHistoryPanel() {
           const url = normalizeUrlAttr(raw);
           const providerKey = e.currentTarget.getAttribute('data-provider');
           if (!url) return;
+          // 确保恢复 BrowserView，再进行跳转
+          try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
           
           // Load the URL in the sidebar
           const container = document.getElementById('iframe');
@@ -599,9 +601,9 @@ async function renderHistoryPanel() {
             await updateStarButtonState();
           }
           
-          // Close the history panel
-          panel.style.display = 'none';
+          // Close the history panel（并保证退出覆盖模式）
           try { document.getElementById('historyBackdrop')?.remove(); } catch (_) {}
+          panel.style.display = 'none';
         } catch (err) {
           console.error('Error opening history item in sidebar:', err);
         }
@@ -878,7 +880,7 @@ async function renderFavoritesPanel() {
     }).join('');
     panel.innerHTML = `<div class=\"fp-header\">\n      <span>Favorites</span>\n      <span class=\"fp-actions\">\n        <button id=\"fp-add-current\">Add Current</button>\n        <button id=\"fp-clear-all\">Clear</button>\n        <button id=\"fp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"fp-search-row\">\n      <span class=\"fp-search-icon\">🔍</span>\n      <input id=\"fp-search-input\" class=\"fp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"fp-list\">${rows || ''}</div>`;
 
-    panel.querySelector('#fp-close')?.addEventListener('click', ()=> panel.style.display='none');
+    panel.querySelector('#fp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
     panel.querySelector('#fp-clear-all')?.addEventListener('click', async ()=>{ await saveFavorites([]); renderFavoritesPanel(); });
     
     panel.querySelector('#fp-add-current')?.addEventListener('click', async ()=>{
@@ -900,6 +902,8 @@ async function renderFavoritesPanel() {
           const url = e.currentTarget.getAttribute('data-url');
           const providerKey = e.currentTarget.getAttribute('data-provider');
           if (!url) return;
+          // 确保恢复 BrowserView，再进行跳转
+          try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
           
           // Load the URL in the sidebar
           const container = document.getElementById('iframe');
@@ -949,9 +953,9 @@ async function renderFavoritesPanel() {
             await updateStarButtonState();
           }
           
-          // Close the favorites panel
-          panel.style.display = 'none';
+          // Close the favorites panel（并保证退出覆盖模式）
           try { document.getElementById('favoritesBackdrop')?.remove(); } catch (_) {}
+          panel.style.display = 'none';
         } catch (err) {
           console.error('Error opening favorite in sidebar:', err);
         }
@@ -1527,23 +1531,12 @@ const initializeBar = async () => {
       await renderHistoryPanel();
       panel.style.display = 'block';
       ensureBackdrop();
-      try {
-        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
-          const rect = panel.getBoundingClientRect();
-          const reserve = Math.ceil(rect.bottom) + 8; // 额外留白
-          window.electronAPI.setTopInset(reserve);
-        }
-      } catch (_) {}
+      try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
     };
     const hideHistoryPanel = () => {
       panel.style.display = 'none';
       removeBackdrop();
-      try {
-        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
-          // 关闭时按其他可见浮层重算
-          requestAnimationFrame(refreshTopInsetFromVisibleOverlays);
-        }
-      } catch (_) {}
+      try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
     };
     window.hideHistoryPanel = hideHistoryPanel; // expose for other handlers if needed
     window.showHistoryPanel = showHistoryPanel;
@@ -1560,8 +1553,7 @@ const initializeBar = async () => {
 
   // Close with Escape
   document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') hideHistoryPanel(); }, true);
-  // 窗口尺寸变更时重算预留空间
-  window.addEventListener('resize', ()=>{ try { refreshTopInsetFromVisibleOverlays(); } catch(_){} });
+  // overlay 模式无需处理窗口尺寸推挤
   } catch (_) {}
 
   // Favorites button handler
@@ -1609,22 +1601,12 @@ const initializeBar = async () => {
       await renderFavoritesPanel();
       panel.style.display = 'block';
       ensureBackdrop();
-      try {
-        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
-          const rect = panel.getBoundingClientRect();
-          const reserve = Math.ceil(rect.bottom) + 8;
-          window.electronAPI.setTopInset(reserve);
-        }
-      } catch (_) {}
+      try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
     };
     const hideFavoritesPanel = () => {
       panel.style.display = 'none';
       removeBackdrop();
-      try {
-        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
-          requestAnimationFrame(refreshTopInsetFromVisibleOverlays);
-        }
-      } catch (_) {}
+      try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
     };
     window.hideFavoritesPanel = hideFavoritesPanel;
     window.showFavoritesPanel = showFavoritesPanel;
@@ -2275,22 +2257,7 @@ initializeBar();
   let isSearchVisible = false;
   let currentSearchTerm = '';
 
-  // 统一根据可见浮层计算并通知主进程保留顶部空间
-  window.refreshTopInsetFromVisibleOverlays = function refreshTopInsetFromVisibleOverlays() {
-    try {
-      if (!(IS_ELECTRON && window.electronAPI?.setTopInset)) return;
-      let reserve = 50; // 基础工具栏
-      const ids = ['searchBar','historyPanel','favoritesPanel'];
-      for (const id of ids) {
-        const el = document.getElementById(id);
-        if (el && el.style.display !== 'none') {
-          const r = el.getBoundingClientRect();
-          reserve = Math.max(reserve, Math.ceil(r.bottom) + 8);
-        }
-      }
-      window.electronAPI.setTopInset(reserve);
-    } catch (_) {}
-  };
+  // 顶部预留逻辑移除：采用 overlay 模式，不再推挤 BrowserView
 
   // 切换搜索框显示/隐藏
   function toggleSearch() {
@@ -2300,13 +2267,7 @@ initializeBar();
       searchBar.style.display = 'block';
       searchInput.focus();
       searchInput.select();
-      try {
-        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
-          const rect = searchBar.getBoundingClientRect();
-          const reserve = Math.ceil(rect.bottom) + 8;
-          window.electronAPI.setTopInset(reserve);
-        }
-      } catch (_) {}
+      try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
       
       // 高亮搜索按钮
       if (searchBtn) {
@@ -2320,11 +2281,7 @@ initializeBar();
     } else {
       searchBar.style.display = 'none';
       clearSearch();
-      try {
-        if (IS_ELECTRON && window.electronAPI?.setTopInset) {
-          requestAnimationFrame(refreshTopInsetFromVisibleOverlays);
-        }
-      } catch (_) {}
+      try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
       
       // 取消高亮搜索按钮
       if (searchBtn) {

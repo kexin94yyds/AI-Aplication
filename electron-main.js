@@ -167,6 +167,24 @@ function startSyncHttpServer() {
   }
 }
 
+// ============== 覆盖模式：暂时隐藏/恢复 BrowserView ==============
+let overlayDepth = 0;
+function detachBrowserView() {
+  try {
+    if (mainWindow && currentBrowserView) {
+      mainWindow.removeBrowserView(currentBrowserView);
+    }
+  } catch (e) { console.error('detachBrowserView error:', e); }
+}
+function attachBrowserView() {
+  try {
+    if (mainWindow && currentBrowserView) {
+      mainWindow.addBrowserView(currentBrowserView);
+      updateBrowserViewBounds();
+    }
+  } catch (e) { console.error('attachBrowserView error:', e); }
+}
+
 // AI 提供商配置
 const PROVIDERS = {
   chatgpt: { url: 'https://chatgpt.com', partition: 'persist:chatgpt' },
@@ -340,15 +358,16 @@ function switchToProvider(providerKey) {
     return;
   }
 
-  // 添加新视图
+  // 添加新视图（若当前处于覆盖模式，则先不添加，仅记录，待退出覆盖时再 attach）
   try {
-    mainWindow.addBrowserView(view);
     currentBrowserView = view;
-    console.log('Added BrowserView for:', providerKey);
-    
-    // 设置视图位置
-    updateBrowserViewBounds();
-    
+    if (overlayDepth > 0) {
+      console.log('Overlay active; defer addBrowserView for:', providerKey);
+    } else {
+      mainWindow.addBrowserView(view);
+      console.log('Added BrowserView for:', providerKey);
+      updateBrowserViewBounds();
+    }
     // 通知渲染进程切换成功
     mainWindow.webContents.send('provider-switched', providerKey);
   } catch (e) {
@@ -581,9 +600,13 @@ ipcMain.on('switch-provider', (event, payload) => {
         }
       });
       view.webContents.loadURL(url);
-      mainWindow.addBrowserView(view);
       currentBrowserView = view;
-      updateBrowserViewBounds();
+      if (overlayDepth > 0) {
+        console.log('Overlay active; defer addBrowserView for dynamic provider');
+      } else {
+        mainWindow.addBrowserView(view);
+        updateBrowserViewBounds();
+      }
       mainWindow.webContents.send('provider-switched', providerKey || 'custom');
       return;
     }
@@ -645,6 +668,20 @@ ipcMain.on('set-top-inset', (event, px) => {
       updateBrowserViewBounds();
     }
   } catch (_) {}
+});
+
+// 覆盖模式 IPC
+ipcMain.on('overlay-enter', () => {
+  overlayDepth = Math.max(0, overlayDepth + 1);
+  if (overlayDepth === 1) {
+    detachBrowserView();
+  }
+});
+ipcMain.on('overlay-exit', () => {
+  overlayDepth = Math.max(0, overlayDepth - 1);
+  if (overlayDepth === 0) {
+    attachBrowserView();
+  }
 });
 
 // ============== 截屏与文字注入（自动送入输入框） ==============
