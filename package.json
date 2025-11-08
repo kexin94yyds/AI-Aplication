@@ -8,7 +8,8 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "update": "./update-app.sh"
   },
   "dependencies": {
     "electron-store": "^8.1.0"

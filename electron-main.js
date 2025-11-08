@@ -788,12 +788,21 @@ function simulateSystemCopy() {
   return new Promise((resolve) => {
     try {
       if (process.platform === 'darwin') {
-        // 通过 AppleScript 发送 Cmd+C（需要"辅助功能"权限）
-        exec('osascript -e "tell application \\"System Events\\" to keystroke \\"c\\" using {command down}"', (error) => {
+        // 方法1: 使用 osascript（需要"辅助功能"权限）
+        exec('osascript -e "tell application \\"System Events\\" to keystroke \\"c\\" using {command down}"', (error, stdout, stderr) => {
           if (error) {
-            console.error('模拟复制失败（可能需要辅助功能权限）:', error.message);
+            console.log('⚠️ osascript 复制失败，尝试备用方法...');
+            // 方法2: 使用 AppleScript 的另一种方式
+            exec('osascript -e \'tell application "System Events" to keystroke "c" using command down\'', (error2) => {
+              if (error2) {
+                console.error('❌ 模拟复制失败，需要"系统设置 → 隐私与安全性 → 辅助功能"权限');
+                console.error('   错误:', error2.message);
+              }
+              resolve();
+            });
+          } else {
+            resolve();
           }
-          resolve();
         });
       } else if (process.platform === 'win32') {
         // PowerShell 发送 Ctrl+C
@@ -809,31 +818,151 @@ function simulateSystemCopy() {
 
 async function getSelectedTextAuto() {
   try {
-    // 先清空剪贴板，确保获取的是最新内容
-    const oldClipboard = clipboard.readText();
+    console.log('[getSelectedText] 开始获取选中文字...');
+    
+    // 方法1: 尝试从 BrowserView 中直接获取选中的文字（最可靠）
+    if (currentBrowserView && currentBrowserView.webContents) {
+      try {
+        console.log('[getSelectedText] 尝试从 BrowserView 获取...');
+        
+        // 先让 BrowserView 获得焦点，确保能获取到选中文字
+        currentBrowserView.webContents.focus();
+        await new Promise(r => setTimeout(r, 50)); // 减少等待时间，快速获取
+        
+        const selectedText = await currentBrowserView.webContents.executeJavaScript(`
+          (function() {
+            try {
+              console.log('[BrowserView] 开始获取选中文字...');
+              
+              // 尝试多种方式获取选中文字
+              let text = null;
+              
+              // 方法1: window.getSelection() - 最常用
+              try {
+                const sel = window.getSelection();
+                console.log('[BrowserView] window.getSelection:', sel ? '存在' : '不存在', 'rangeCount:', sel ? sel.rangeCount : 0);
+                if (sel && sel.rangeCount > 0) {
+                  text = sel.toString().trim();
+                  console.log('[BrowserView] 从 window.getSelection 获取:', text ? text.length + '字符' : '空');
+                  if (text) {
+                    return text;
+                  }
+                }
+              } catch(e1) {
+                console.log('[BrowserView] window.getSelection 失败:', e1);
+              }
+              
+              // 方法2: document.getSelection() - 备用
+              try {
+                const docSel = document.getSelection();
+                console.log('[BrowserView] document.getSelection:', docSel ? '存在' : '不存在', 'rangeCount:', docSel ? docSel.rangeCount : 0);
+                if (docSel && docSel.rangeCount > 0) {
+                  text = docSel.toString().trim();
+                  console.log('[BrowserView] 从 document.getSelection 获取:', text ? text.length + '字符' : '空');
+                  if (text) {
+                    return text;
+                  }
+                }
+              } catch(e2) {
+                console.log('[BrowserView] document.getSelection 失败:', e2);
+              }
+              
+              // 方法3: 检查是否有选中的文本节点（更底层的方法）
+              try {
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0) {
+                  const range = sel.getRangeAt(0);
+                  text = range.toString().trim();
+                  console.log('[BrowserView] 从 range 获取:', text ? text.length + '字符' : '空');
+                  if (text) {
+                    return text;
+                  }
+                }
+              } catch(e3) {
+                console.log('[BrowserView] range 获取失败:', e3);
+              }
+              
+              console.log('[BrowserView] ❌ 未找到选中文字');
+              return null;
+            } catch(e) {
+              console.error('[BrowserView] 获取选中文字异常:', e);
+              return null;
+            }
+          })();
+        `);
+        
+        if (selectedText && selectedText.trim()) {
+          console.log('✅ 从 BrowserView 获取选中文字成功:', selectedText.length, '字符');
+          console.log('   预览:', selectedText.substring(0, 50));
+          return selectedText;
+        } else {
+          console.log('⚠️ BrowserView 中未检测到选中文字');
+        }
+      } catch (e) {
+        console.log('❌ 从 BrowserView 获取选中文字失败:', e.message);
+      }
+    } else {
+      console.log('⚠️ BrowserView 不存在，跳过直接获取');
+    }
+    
+    // 方法2: 使用剪贴板方法（适用于在其他应用中选中的文字）
+    console.log('[getSelectedText] 尝试使用剪贴板方法获取选中文字...');
+    
+    // 先读取当前剪贴板内容
+    let oldClipboard = '';
+    try { 
+      oldClipboard = clipboard.readText(); 
+      console.log('   当前剪贴板内容:', oldClipboard ? oldClipboard.substring(0, 50) + '...' : '(空)');
+    } catch (_) {
+      console.log('   无法读取当前剪贴板');
+    }
+    
+    // 确保 BrowserView 有焦点，这样 Cmd+C 才能正确复制选中内容
+    if (currentBrowserView && currentBrowserView.webContents) {
+      currentBrowserView.webContents.focus();
+      await new Promise(r => setTimeout(r, 100)); // 等待焦点稳定
+    }
     
     // 尝试模拟一次系统复制
+    console.log('   正在模拟 Cmd+C...');
     await simulateSystemCopy();
     
-    // 增加等待时间到 300ms，给系统足够时间完成复制
-    await new Promise(r => setTimeout(r, 300));
+    // 增加等待时间到 600ms，给系统足够时间完成复制
+    await new Promise(r => setTimeout(r, 600));
     
     // 读取剪贴板
     let text = '';
-    try { text = clipboard.readText(); } catch (_) {}
+    try { 
+      text = clipboard.readText(); 
+      console.log('   复制后剪贴板内容:', text ? text.substring(0, 50) + '...' : '(空)');
+    } catch (_) {
+      console.log('   无法读取复制后的剪贴板');
+    }
     
     // 如果获取到新内容，返回
     if (text && text.trim() && text !== oldClipboard) {
-      console.log('成功获取选中文字:', text.length, '字符');
+      console.log('✅ 从剪贴板获取选中文字成功:', text.length, '字符');
+      console.log('   预览:', text.substring(0, 50));
       return text;
     }
     
-    // 如果剪贴板没有变化，但有内容，也返回（用户可能已经复制过了）
+    // 如果剪贴板没有变化，但有内容，可能是：
+    // 1. 用户已经手动复制过了
+    // 2. 模拟复制失败（需要权限）
     if (text && text.trim()) {
-      console.log('使用剪贴板现有内容:', text.length, '字符');
+      if (text === oldClipboard) {
+        console.log('⚠️ 剪贴板内容未变化，可能原因：');
+        console.log('   1. 模拟复制失败（需要在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用）');
+        console.log('   2. 没有选中文字');
+        console.log('   3. 使用剪贴板现有内容:', text.length, '字符');
+      } else {
+        console.log('⚠️ 使用剪贴板现有内容:', text.length, '字符');
+      }
+      console.log('   预览:', text.substring(0, 50));
       return text;
     }
     
+    console.log('❌ 未检测到选中文字');
     return '';
   } catch (e) {
     console.error('read clipboard text error:', e);
@@ -842,53 +971,233 @@ async function getSelectedTextAuto() {
 }
 
 async function insertTextIntoCurrentView(text) {
-  if (!text) return { ok:false, error:'empty' };
-  if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
+  if (!text) {
+    console.error('[insertText] 文字为空');
+    return { ok:false, error:'empty' };
+  }
+  if (!currentBrowserView || !currentBrowserView.webContents) {
+    console.error('[insertText] 没有 BrowserView');
+    return { ok:false, error:'no-view' };
+  }
+  
+  console.log('[insertText] 开始插入文字，长度:', text.length);
+  console.log('[insertText] 文字预览:', text.substring(0, 100));
+  
   try {
+    // 尝试通过 JavaScript 注入
     const ok = await currentBrowserView.webContents.executeJavaScript(`
       (function(){
         try {
           const text = ${JSON.stringify(text)};
+          console.log('[BrowserView] 开始查找输入框...');
+          
           function findPromptElement(){
-            const selectors=['textarea','div[contenteditable="true"]','[role="textbox"]','[aria-label*="prompt" i]','[data-testid*="prompt" i]','[data-testid*="textbox" i]'];
+            // 扩展的选择器列表，包括更多可能的输入框类型
+            const selectors=[
+              'textarea',
+              'div[contenteditable="true"]',
+              '[contenteditable="true"]',
+              '[role="textbox"]',
+              '[aria-label*="prompt" i]',
+              '[aria-label*="message" i]',
+              '[aria-label*="输入" i]',
+              '[data-testid*="prompt" i]',
+              '[data-testid*="textbox" i]',
+              '[data-testid*="composer" i]',
+              '[id*="prompt" i]',
+              '[id*="input" i]',
+              '[id*="composer" i]',
+              '[class*="composer" i]',
+              '[class*="input" i]',
+              '[class*="prompt" i]'
+            ];
+            
             for (const s of selectors){
-              const els=Array.from(document.querySelectorAll(s));
-              const visible=els.filter(el=>{const cs=getComputedStyle(el);return cs.display!=='none' && cs.visibility!=='hidden' && el.offsetParent!==null;});
-              if (visible.length){visible.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);return visible[0];}
+              try {
+                const els=Array.from(document.querySelectorAll(s));
+                const visible=els.filter(el=>{
+                  const cs=getComputedStyle(el);
+                  const rect = el.getBoundingClientRect();
+                  return cs.display!=='none' && 
+                         cs.visibility!=='hidden' && 
+                         el.offsetParent!==null &&
+                         rect.width > 50 && 
+                         rect.height > 20;
+                });
+                if (visible.length){
+                  console.log('[BrowserView] 找到输入框:', s, '数量:', visible.length);
+                  // 优先选择最下方的（通常是当前活动的输入框）
+                  visible.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
+                  const selected = visible[0];
+                  console.log('[BrowserView] 选择输入框:', selected.tagName, selected.id, selected.className);
+                  return selected;
+                }
+              } catch(e) {
+                console.log('[BrowserView] 选择器查询失败:', s, e);
+              }
             }
+            console.log('[BrowserView] 未找到输入框');
             return null;
           }
+          
           function setEl(el, t){
             const tag=(el.tagName||'').toLowerCase();
+            console.log('[BrowserView] 尝试设置元素:', tag);
+            
+            // 保存当前滚动位置，防止页面跳转
+            const scrollX = window.scrollX || window.pageXOffset || 0;
+            const scrollY = window.scrollY || window.pageYOffset || 0;
+            const elScrollTop = el.scrollTop || 0;
+            
             if (tag==='textarea' || (el.value!==undefined)){
-              el.focus();
+              // 使用 preventScroll 选项（如果支持）
+              try {
+                el.focus({ preventScroll: true });
+              } catch(_) {
+                el.focus();
+              }
               const cur=String(el.value||'');
-              const nv=cur? (cur+'\n'+t): t;
-              el.value=nv; try{ el.selectionStart=el.selectionEnd=nv.length; }catch(_){}
+              const nv=cur? (cur+'\\n'+t): t;
+              el.value=nv; 
+              try{ el.selectionStart=el.selectionEnd=nv.length; }catch(_){}
               el.scrollTop=el.scrollHeight;
               el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
               el.dispatchEvent(new Event('change',{bubbles:true}));
+              
+              // 恢复滚动位置
+              window.scrollTo(scrollX, scrollY);
+              el.scrollTop = elScrollTop;
+              
+              console.log('[BrowserView] textarea 设置成功');
               return true;
             }
             if (el.isContentEditable || el.getAttribute('contenteditable')==='true'){
-              el.focus();
-              const sel=window.getSelection(); const range=document.createRange();
-              range.selectNodeContents(el); range.collapse(false); sel.removeAllRanges(); sel.addRange(range);
-              if (el.textContent && el.textContent.trim()) document.execCommand('insertText',false,'\n');
-              document.execCommand('insertText',false,t);
-              el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
-              return true;
+              // 方法1: 不调用 focus，直接操作（避免页面跳转）
+              try {
+                const sel = window.getSelection();
+                const range = document.createRange();
+                
+                // 移动到元素末尾
+                range.selectNodeContents(el);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                
+                // 如果有现有内容，先添加换行
+                if (el.textContent && el.textContent.trim()) {
+                  const textNode = document.createTextNode('\\n' + t);
+                  range.insertNode(textNode);
+                  range.setStartAfter(textNode);
+                  range.collapse(false);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                } else {
+                  const textNode = document.createTextNode(t);
+                  range.insertNode(textNode);
+                  range.setStartAfter(textNode);
+                  range.collapse(false);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+                
+                // 触发事件
+                el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,data:t}));
+                el.dispatchEvent(new Event('change',{bubbles:true}));
+                
+                // 恢复滚动位置
+                window.scrollTo(scrollX, scrollY);
+                
+                console.log('[BrowserView] contenteditable 设置成功 (方法1)');
+                return true;
+              } catch(e1) {
+                console.log('[BrowserView] 方法1失败，尝试方法2:', e1);
+              }
+              
+              // 方法2: 使用 preventScroll 的 focus + execCommand
+              try {
+                try {
+                  el.focus({ preventScroll: true });
+                } catch(_) {
+                  el.focus();
+                }
+                const sel=window.getSelection(); const range=document.createRange();
+                range.selectNodeContents(el); range.collapse(false); sel.removeAllRanges(); sel.addRange(range);
+                if (el.textContent && el.textContent.trim()) document.execCommand('insertText',false,'\\n');
+                document.execCommand('insertText',false,t);
+                el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
+                
+                // 恢复滚动位置
+                window.scrollTo(scrollX, scrollY);
+                
+                console.log('[BrowserView] contenteditable 设置成功 (方法2)');
+                return true;
+              } catch(e2) {
+                console.log('[BrowserView] 方法2失败，尝试方法3:', e2);
+              }
+              
+              // 方法3: 直接设置 innerText/textContent（不调用 focus）
+              try {
+                const cur = el.textContent || el.innerText || '';
+                el.textContent = cur ? (cur + '\\n' + t) : t;
+                el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
+                el.dispatchEvent(new Event('change',{bubbles:true}));
+                
+                // 恢复滚动位置
+                window.scrollTo(scrollX, scrollY);
+                
+                console.log('[BrowserView] contenteditable 设置成功 (方法3)');
+                return true;
+              } catch(e3) {
+                console.log('[BrowserView] 方法3失败:', e3);
+              }
+              
+              return false;
             }
+            console.log('[BrowserView] 无法识别的元素类型');
             return false;
           }
+          
           const el=findPromptElement();
-          if (!el) return false;
+          if (!el) {
+            console.log('[BrowserView] 未找到输入框元素');
+            return false;
+          }
           return setEl(el,text);
-        } catch(e){ return false; }
+        } catch(e){ 
+          console.error('[BrowserView] 插入失败:', e);
+          return false; 
+        }
       })();
     `);
-    return { ok: !!ok };
+    
+    if (ok) {
+      console.log('[insertText] ✅ JavaScript 注入成功');
+      return { ok: true, method: 'javascript' };
+    }
+    
+    // 如果 JavaScript 注入失败，尝试系统级粘贴
+    console.log('[insertText] JavaScript 注入失败，尝试系统粘贴...');
+    const oldClipboard = clipboard.readText();
+    clipboard.writeText(text);
+    
+    try {
+      currentBrowserView.webContents.focus();
+      await new Promise(r => setTimeout(r, 100));
+      currentBrowserView.webContents.paste();
+      console.log('[insertText] ✅ 系统粘贴成功');
+      
+      // 恢复原剪贴板内容
+      setTimeout(() => {
+        try { clipboard.writeText(oldClipboard); } catch(_){}
+      }, 500);
+      
+      return { ok: true, method: 'system-paste' };
+    } catch (e) {
+      console.error('[insertText] 系统粘贴失败:', e);
+      return { ok: false, error: '系统粘贴失败' };
+    }
   } catch (e) {
+    console.error('[insertText] 异常:', e);
     return { ok:false, error:String(e) };
   }
 }
@@ -1032,6 +1341,15 @@ app.whenReady().then(() => {
     [extraHotkey]: globalShortcut.isRegistered(extraHotkey)
   });
   console.log('应用已启动！按 Option+Space 或 Shift+Cmd/Ctrl+Space（或 F13）呼出侧边栏');
+  console.log('');
+  console.log('📝 文字注入功能已启用:');
+  console.log('   - 快捷键: Command+Shift+Y (Mac) 或 Control+Shift+Y (Windows)');
+  console.log('   - 用法: 选中文字后按快捷键，文字会自动注入到输入框');
+  console.log('');
+  console.log('⚠️  macOS 权限提示:');
+  console.log('   如果文字无法自动复制，请在"系统设置 → 隐私与安全性 → 辅助功能"中');
+  console.log('   添加 AI Sidebar，允许其控制电脑。这样才能自动复制选中的文字。');
+  console.log('');
   
   // ============== 截屏/文字 全局快捷键 ==============
   const screenshotKey = process.platform === 'darwin' ? 'Command+Shift+K' : 'Control+Shift+K';
