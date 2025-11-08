@@ -910,6 +910,9 @@ function closeEmbeddedBrowser() {
   }
 
   try {
+    // 先设置状态，确保 updateBrowserViewBounds 知道要恢复全屏
+    isEmbeddedBrowserActive = false;
+    
     // 移除内嵌浏览器视图
     if (mainWindow && embeddedBrowserView) {
       mainWindow.removeBrowserView(embeddedBrowserView);
@@ -929,14 +932,17 @@ function closeEmbeddedBrowser() {
       
       currentBrowserView = previousBrowserView;
       
+      // 更新布局为全屏（因为 isEmbeddedBrowserActive 已设置为 false，会走全屏分支）
       if (overlayDepth > 0) {
         console.log('[Embedded Browser] Overlay active; defer restore BrowserView');
       } else {
         updateBrowserViewBounds(); // 恢复全屏布局
       }
+    } else if (currentBrowserView && mainWindow) {
+      // 如果没有 previousBrowserView，确保 currentBrowserView 是全屏显示
+      updateBrowserViewBounds();
     }
 
-    isEmbeddedBrowserActive = false;
     previousBrowserView = null;
 
     // 通知渲染进程
