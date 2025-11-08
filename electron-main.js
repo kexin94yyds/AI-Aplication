@@ -14,6 +14,8 @@ let currentProviderKey = 'chatgpt'; // 跟踪当前 provider
 let embeddedBrowserView = null; // 内嵌浏览器视图（用于显示链接）
 let previousBrowserView = null; // 保存打开内嵌浏览器前的 BrowserView
 let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
+// 跟踪最近获得焦点的 BrowserView（用于定向刷新）
+let lastFocusedBrowserView = null;
 let splitRatio = 0.5; // 分屏比例（0-1，0.5 表示各占一半）
 // 分割线命中区域（与渲染进程中的 .split-divider 保持一致）
 const DIVIDER_GUTTER = 24; // px，左右各一半作为留白，便于拖动
@@ -182,6 +184,41 @@ function startSyncHttpServer() {
   }
 }
 
+// 仅刷新当前活动区域，不刷新整个窗口或重置分割线
+function reloadActivePane(ignoreCache = false) {
+  try {
+    // 首选最近聚焦的 BrowserView
+    let target = lastFocusedBrowserView;
+    // 如果没有记录或记录的视图不在当前布局中，则根据当前布局选择
+    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
+      const left = previousBrowserView;
+      const right = embeddedBrowserView;
+      const views = mainWindow?.getBrowserViews() || [];
+      if (!target || !views.includes(target)) {
+        if (right?.webContents?.isFocused && right.webContents.isFocused()) {
+          target = right;
+        } else if (left?.webContents?.isFocused && left.webContents.isFocused()) {
+          target = left;
+        } else {
+          // 默认刷新右侧（更像“浏览器区”）
+          target = right;
+        }
+      }
+    } else {
+      // 全屏单视图
+      target = currentBrowserView || target;
+    }
+    if (!target || !target.webContents) return;
+    if (ignoreCache && typeof target.webContents.reloadIgnoringCache === 'function') {
+      target.webContents.reloadIgnoringCache();
+    } else {
+      target.webContents.reload();
+    }
+  } catch (e) {
+    console.error('reloadActivePane error:', e);
+  }
+}
+
 // ============== 覆盖模式：暂时隐藏/恢复 BrowserView ==============
 let overlayDepth = 0;
 function detachBrowserView() {
@@ -289,6 +326,25 @@ function createWindow() {
     });
   } catch (_) {}
   
+  // 拦截窗口级快捷键：Cmd/Ctrl+R、Shift+Cmd/Ctrl+R、F5 → 刷新当前焦点区域
+  try {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      try {
+        if (input && input.type === 'keyDown') {
+          const isReloadKey = (
+            ((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) ||
+            (input.key === 'F5')
+          );
+          if (isReloadKey) {
+            event.preventDefault();
+            const hard = !!input.shift;
+            reloadActivePane(hard);
+          }
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+
   // 🔍 参考 Full-screen-prompt 项目：延迟检查，忽略刚显示后的短暂失焦
   try {
     mainWindow.on('blur', () => {
@@ -372,6 +428,11 @@ function getOrCreateBrowserView(providerKey) {
       enableRemoteModule: false,
     }
   });
+
+  // 跟踪焦点：点击该视图后，后续刷新将定向到它
+  try {
+    view.webContents.on('focus', () => { lastFocusedBrowserView = view; });
+  } catch (_) {}
 
   // 可选：为 BrowserView 打开独立 DevTools 便于调试（命令行 --view-dev 或环境变量 AISB_VIEW_DEVTOOLS=1）
   try {
@@ -487,11 +548,31 @@ function getOrCreateBrowserView(providerKey) {
     try {
       view.webContents.on('before-input-event', (event, input) => {
         try {
-          if (input && input.type === 'keyDown' && input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
-            // 阻止 Tab 传给站点本身，转为切换 Provider
-            event.preventDefault();
-            const dir = input.shift ? -1 : 1;
-            cycleToNextProvider(dir);
+          if (input && input.type === 'keyDown') {
+            // 1) 拦截 Tab：用于切换 Provider
+            if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
+              event.preventDefault();
+              const dir = input.shift ? -1 : 1;
+              cycleToNextProvider(dir);
+              return;
+            }
+            // 2) 拦截刷新：仅刷新当前这个 BrowserView，避免主窗口被刷新导致分割线消失
+            const isReloadKey = (
+              ((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) ||
+              (input.key === 'F5')
+            );
+            if (isReloadKey) {
+              event.preventDefault();
+              const hard = !!input.shift;
+              try {
+                if (hard && typeof view.webContents.reloadIgnoringCache === 'function') {
+                  view.webContents.reloadIgnoringCache();
+                } else {
+                  view.webContents.reload();
+                }
+              } catch (_) {}
+              return;
+            }
           }
         } catch (_) {}
       });
@@ -1103,6 +1184,35 @@ function openEmbeddedBrowser(url) {
         mainWindow?.webContents.send('embedded-browser-loaded');
       });
     }
+    // 键盘拦截：确保在右侧获得焦点时，Cmd/Ctrl+R 只刷新右侧视图
+    try {
+      embeddedBrowserView.webContents.on('before-input-event', (event, input) => {
+        try {
+          if (input && input.type === 'keyDown') {
+            const isReloadKey = (
+              ((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) ||
+              (input.key === 'F5')
+            );
+            if (isReloadKey) {
+              event.preventDefault();
+              const hard = !!input.shift;
+              try {
+                if (hard && typeof embeddedBrowserView.webContents.reloadIgnoringCache === 'function') {
+                  embeddedBrowserView.webContents.reloadIgnoringCache();
+                } else {
+                  embeddedBrowserView.webContents.reload();
+                }
+              } catch (_) {}
+              return;
+            }
+          }
+        } catch (_) {}
+      });
+    } catch (_) {}
+    // 跟踪焦点：点击右侧内嵌浏览器后，刷新定向到右侧
+    try {
+      embeddedBrowserView.webContents.on('focus', () => { lastFocusedBrowserView = embeddedBrowserView; });
+    } catch (_) {}
 
     // 加载 URL
     embeddedBrowserView.webContents.loadURL(url);
@@ -1416,25 +1526,9 @@ async function focusPromptInCurrentView() {
   if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
   try { currentBrowserView.webContents.focus(); } catch (_) {}
   try {
-    // 进入短暂布局冻结，避免聚焦/样式调整引发的抖动
-    try { mainWindow?.webContents.send('layout-state', { action:'freeze-enter', ts: Date.now() }); } catch (_) {}
-    layoutFreezeDepth = Math.max(0, layoutFreezeDepth + 1);
     const result = await currentBrowserView.webContents.executeJavaScript(`
       (function() {
         try {
-          // 稳定全屏背景页在滚动条出现/隐藏时的布局抖动
-          try {
-            const root = document.documentElement;
-            const body = document.body;
-            if (root && root.style) {
-              root.style.scrollbarGutter = 'stable both-edges';
-              // overlay 在 macOS 上不占宽；若不支持则回退为 scroll
-              try { root.style.overflowY = 'overlay'; } catch (_) { root.style.overflowY = 'scroll'; }
-            }
-            if (body && body.style) {
-              body.style.scrollbarGutter = 'stable both-edges';
-            }
-          } catch (_) {}
           function findPromptElement() {
             const selectors = [
               'textarea',
@@ -1484,14 +1578,6 @@ async function focusPromptInCurrentView() {
         }
       })();
     `);
-    // 退出冻结（稍微延迟确保样式生效）
-    setTimeout(() => {
-      layoutFreezeDepth = Math.max(0, layoutFreezeDepth - 1);
-      if (layoutFreezeDepth === 0 && hasPendingLayoutUpdate) {
-        hasPendingLayoutUpdate = false; updateBrowserViewBounds();
-      }
-      try { mainWindow?.webContents.send('layout-state', { action:'freeze-exit', ts: Date.now() }); } catch (_) {}
-    }, 200);
     return result && result.ok ? result : { ok:false, error: (result && result.error)||'unknown' };
   } catch (e) {
     return { ok:false, error:String(e) };
@@ -1528,6 +1614,165 @@ function simulateSystemCopy() {
       }
     } catch (_) { resolve(); }
   });
+}
+
+// 获取当前选中的文字
+async function getSelectedText() {
+  try {
+    if (process.platform === 'darwin') {
+      // macOS: 使用 AppleScript 直接获取选中的文字
+      return new Promise((resolve) => {
+        exec('osascript -e \'tell application "System Events" to get the value of attribute "AXSelectedText" of (first process whose frontmost is true)\'', (error, stdout, stderr) => {
+          if (error) {
+            // 如果直接获取失败，尝试通过复制到剪贴板的方式
+            console.log('直接获取选中文字失败，尝试通过剪贴板方式...');
+            getSelectedTextViaClipboard().then(resolve).catch(() => resolve(''));
+            return;
+          }
+          const text = (stdout || '').trim();
+          resolve(text || '');
+        });
+      });
+    } else {
+      // Windows/Linux: 通过剪贴板方式
+      return await getSelectedTextViaClipboard();
+    }
+  } catch (e) {
+    console.error('获取选中文字失败:', e);
+    return '';
+  }
+}
+
+// 通过复制到剪贴板然后读取的方式获取选中文字（备用方法）
+async function getSelectedTextViaClipboard() {
+  try {
+    // 保存当前剪贴板内容
+    const originalClipboard = clipboard.readText();
+    
+    // 模拟复制操作（Cmd+C）
+    await simulateSystemCopy();
+    
+    // 等待一小段时间确保复制完成
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
+    // 读取剪贴板内容
+    const selectedText = clipboard.readText();
+    
+    // 恢复原始剪贴板内容
+    if (originalClipboard) {
+      clipboard.writeText(originalClipboard);
+    }
+    
+    return selectedText || '';
+  } catch (e) {
+    console.error('通过剪贴板获取选中文字失败:', e);
+    return '';
+  }
+}
+
+// 向 BrowserView 的输入框插入文字
+async function insertTextIntoCurrentView(text) {
+  if (!currentBrowserView || !currentBrowserView.webContents) {
+    return { ok: false, error: 'no-view' };
+  }
+  
+  if (!text || !text.trim()) {
+    return { ok: false, error: 'empty-text' };
+  }
+  
+  try {
+    // 先聚焦到 BrowserView
+    currentBrowserView.webContents.focus();
+    
+    // 等待一小段时间确保焦点已切换
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    const result = await currentBrowserView.webContents.executeJavaScript(`
+      (function() {
+        try {
+          function findPromptElement() {
+            const selectors = [
+              'textarea',
+              'div[contenteditable="true"]',
+              '[role="textbox"]',
+              '[aria-label*="prompt" i]',
+              '[data-testid*="prompt" i]',
+              '[data-testid*="textbox" i]'
+            ];
+            for (const selector of selectors) {
+              const els = Array.from(document.querySelectorAll(selector));
+              const visible = els.filter(el => {
+                const s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+              });
+              if (visible.length) {
+                visible.sort((a,b)=>b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+                return visible[0];
+              }
+            }
+            return null;
+          }
+          
+          function insertTextAtCaret(el, text) {
+            try {
+              if (el.isContentEditable) {
+                // contenteditable 元素
+                const selection = window.getSelection();
+                let range;
+                if (selection.rangeCount > 0) {
+                  range = selection.getRangeAt(0);
+                } else {
+                  // 如果没有选中范围，创建一个新的范围并放在元素末尾
+                  range = document.createRange();
+                  range.selectNodeContents(el);
+                  range.collapse(false);
+                }
+                range.deleteContents();
+                const textNode = document.createTextNode(text);
+                range.insertNode(textNode);
+                range.setStartAfter(textNode);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                // 触发 input 事件
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              } else if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+                // textarea 或 input 元素
+                const start = el.selectionStart || 0;
+                const end = el.selectionEnd || 0;
+                const value = el.value || '';
+                el.value = value.substring(0, start) + text + value.substring(end);
+                el.selectionStart = el.selectionEnd = start + text.length;
+                // 触发 input 事件
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            } catch (e) {
+              console.error('插入文字失败:', e);
+            }
+          }
+          
+          const el = findPromptElement();
+          if (!el) return { ok: false, error: 'no-input' };
+          
+          // 聚焦到输入框
+          try { el.focus(); } catch(_){}
+          
+          // 插入文字
+          const textToInsert = ${JSON.stringify(text)};
+          insertTextAtCaret(el, textToInsert);
+          
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: String(e && e.message || e) };
+        }
+      })();
+    `);
+    
+    return result && result.ok ? result : { ok: false, error: (result && result.error) || 'unknown' };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }
 
 
@@ -1730,6 +1975,50 @@ app.whenReady().then(() => {
     mainWindow?.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
   });
   if (!gotShot) console.error('截图快捷键注册失败:', screenshotKey);
+  
+  // ============== 选中文字插入到侧边栏输入框 ==============
+  const insertTextKey = process.platform === 'darwin' ? 'Command+Shift+Y' : 'Control+Shift+Y';
+  const gotInsertText = globalShortcut.register(insertTextKey, async () => {
+    console.log('选中文字插入快捷键触发:', insertTextKey);
+    try {
+      // 如果窗口未显示，先显示窗口
+      if (!isShowing) {
+        showWindow();
+        // 等待窗口显示完成
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+      
+      // 获取选中的文字
+      const selectedText = await getSelectedText();
+      
+      if (!selectedText || !selectedText.trim()) {
+        console.log('未检测到选中的文字');
+        return;
+      }
+      
+      console.log('获取到选中的文字:', selectedText.substring(0, 50) + '...');
+      
+      // 确保有当前的 BrowserView
+      if (!currentBrowserView) {
+        // 如果没有，切换到默认的 provider
+        switchToProvider('chatgpt');
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      // 插入文字到输入框
+      const result = await insertTextIntoCurrentView(selectedText);
+      
+      if (result.ok) {
+        console.log('✓ 文字已成功插入到输入框');
+      } else {
+        console.error('✗ 插入文字失败:', result.error);
+      }
+    } catch (e) {
+      console.error('选中文字插入功能出错:', e);
+    }
+  });
+  if (!gotInsertText) console.error('选中文字插入快捷键注册失败:', insertTextKey);
+  else console.log('✓ 选中文字插入快捷键已注册:', insertTextKey);
   
   // 首次启动时显示窗口并加载默认 provider
   setTimeout(() => {
