@@ -433,13 +433,62 @@ function cycleToNextProvider(dir = 1) {
 
 // 切换到指定的 provider
 function switchToProvider(providerKey) {
-  console.log('switchToProvider called:', providerKey, 'mainWindow:', !!mainWindow, 'isShowing:', isShowing);
+  console.log('switchToProvider called:', providerKey, 'mainWindow:', !!mainWindow, 'isShowing:', isShowing, 'isEmbeddedBrowserActive:', isEmbeddedBrowserActive);
   
   if (!mainWindow) {
     console.error('mainWindow not available');
     return;
   }
 
+  // 如果内嵌浏览器激活，应该更新 previousBrowserView（左侧显示的AI）
+  if (isEmbeddedBrowserActive) {
+    console.log('[Switch Provider] Embedded browser active, updating previousBrowserView');
+    
+    // 如果 previousBrowserView 不存在，说明是第一次打开内嵌浏览器后切换，需要从 currentBrowserView 获取
+    if (!previousBrowserView && currentBrowserView) {
+      previousBrowserView = currentBrowserView;
+      currentBrowserView = null; // 清空 currentBrowserView，因为现在它变成了 previousBrowserView
+    }
+    
+    // 移除旧的 previousBrowserView
+    if (previousBrowserView) {
+      try {
+        mainWindow.removeBrowserView(previousBrowserView);
+        console.log('Removed previous BrowserView from split view');
+      } catch (e) {
+        console.error('Error removing previousBrowserView:', e);
+      }
+    }
+    
+    // 获取或创建新视图
+    const view = getOrCreateBrowserView(providerKey);
+    if (!view) {
+      console.error('Failed to get BrowserView for:', providerKey);
+      return;
+    }
+    
+    // 更新 previousBrowserView 为新视图
+    previousBrowserView = view;
+    currentProviderKey = providerKey; // 更新当前 provider
+    
+    // 添加到窗口并更新布局
+    try {
+      if (overlayDepth > 0) {
+        console.log('Overlay active; defer addBrowserView for:', providerKey);
+      } else {
+        mainWindow.addBrowserView(view);
+        console.log('Added new BrowserView to split view (left side)');
+        updateBrowserViewBounds();
+      }
+      // 通知渲染进程切换成功
+      mainWindow.webContents.send('provider-switched', providerKey);
+    } catch (e) {
+      console.error('Error adding BrowserView to split view:', e);
+    }
+    return;
+  }
+
+  // 正常情况：内嵌浏览器未激活，更新 currentBrowserView
   // 移除当前视图
   if (currentBrowserView) {
     try {
@@ -868,8 +917,7 @@ function closeEmbeddedBrowser() {
 
     // 恢复之前的 BrowserView（AI 聊天视图）为全屏
     if (previousBrowserView && mainWindow) {
-      currentBrowserView = previousBrowserView;
-      // 确保 AI 聊天视图已添加到窗口（如果之前被移除了）
+      // 确保 previousBrowserView 在窗口中
       try {
         const views = mainWindow.getBrowserViews();
         if (!views.includes(previousBrowserView)) {
@@ -878,6 +926,8 @@ function closeEmbeddedBrowser() {
       } catch (e) {
         console.warn('[Embedded Browser] Error checking/adding previous view:', e);
       }
+      
+      currentBrowserView = previousBrowserView;
       
       if (overlayDepth > 0) {
         console.log('[Embedded Browser] Overlay active; defer restore BrowserView');
