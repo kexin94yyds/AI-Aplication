@@ -88,17 +88,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onScreenshotPasteResult: (callback) => {
     ipcRenderer.on('screenshot-auto-paste-result', (event, data) => callback(data));
   },
+  // 主动请求聚焦 BrowserView 中的提示输入框
+  focusPrompt: () => { try { ipcRenderer.send('focus-prompt'); } catch (_) {} },
+  onFocusPromptResult: (cb) => { ipcRenderer.on('focus-prompt-result', (e, res) => { try { cb(res); } catch (_) {} }); },
   
-  // ============== 文字选择功能 ==============
-  getSelectedText: () => {
-    ipcRenderer.send('get-selected-text');
-  },
-  onSelectedText: (callback) => {
-    ipcRenderer.on('selected-text', (event, data) => callback(data));
-  },
-  onSelectedTextError: (callback) => {
-    ipcRenderer.on('selected-text-error', (event, error) => callback(error));
-  },
   
   // 置顶控制
   toggleAlwaysOnTop: () => {
@@ -126,6 +119,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onFullWidthChanged: (callback) => {
     ipcRenderer.on('full-width-changed', (event, state) => callback(state));
+  },
+  onAppFocus: (callback) => {
+    ipcRenderer.on('app-focus', (event, payload) => { try { callback(payload); } catch (_) {} });
+  },
+  onAppVisibility: (callback) => {
+    ipcRenderer.on('app-visibility', (event, payload) => { try { callback(payload); } catch (_) {} });
+  },
+
+  // Overlay debug events from main process
+  onOverlayState: (callback) => {
+    ipcRenderer.on('overlay-state', (event, payload) => { try { callback(payload); } catch (_) {} });
+  },
+  onOverlayBrowserView: (callback) => {
+    ipcRenderer.on('overlay-browserview', (event, payload) => { try { callback(payload); } catch (_) {} });
   },
   
   // 获取置顶状态
@@ -194,6 +201,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       } catch (e) {
         return false;
       }
+    }
+  },
+  
+  // 🔍 关键修复：锁定/解锁窗口位置（用于插入文本时防止窗口跳动）
+  lockWindowPosition: (shouldLock) => {
+    try {
+      ipcRenderer.send('lock-window-position', shouldLock);
+    } catch (e) {
+      console.error('[Preload] lockWindowPosition error:', e);
     }
   }
 });

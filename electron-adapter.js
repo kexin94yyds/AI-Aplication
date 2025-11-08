@@ -166,23 +166,6 @@ if (window.electronAPI) {
     }
   }
   
-  // 将文字发送到 BrowserView
-  function sendTextToBrowserView(text) {
-    try {
-      console.log('[Electron Adapter] 收到选中文字:', text.length, '字符');
-      
-      // 主进程会自动将文字插入到 BrowserView 的输入框中
-      // 这里只需要显示成功提示
-      
-      // 显示前几个字符作为预览
-      const preview = text.length > 50 ? (text.substring(0, 50) + '...') : text;
-      showToast('文字已自动插入到输入框！预览: ' + preview, 'info');
-    } catch (e) {
-      console.error('发送文字失败:', e);
-      showToast('发送文字失败', 'error');
-    }
-  }
-  
   // 监听截屏结果
   window.electronAPI.onScreenshotCaptured((data) => {
     console.log('[Electron Adapter] 收到截图:', data);
@@ -195,19 +178,6 @@ if (window.electronAPI) {
     showToast('截屏失败: ' + error, 'error');
   });
   
-  // 监听选中文字结果
-  window.electronAPI.onSelectedText((data) => {
-    console.log('[Electron Adapter] 收到选中文字:', data.text.length, '字符');
-    sendTextToBrowserView(data.text);
-  });
-  
-  // 监听选中文字错误
-  window.electronAPI.onSelectedTextError((error) => {
-    console.error('[Electron Adapter] 获取文字错误:', error);
-    const errorMsg = String(error || '未检测到选中文字');
-    showToast(errorMsg, 'warn');
-  });
-  
   // 监听自动粘贴结果
   window.electronAPI.onScreenshotPasteResult?.((res) => {
     if (!res) return;
@@ -218,8 +188,6 @@ if (window.electronAPI) {
     }
   });
   
-  console.log('截屏和文字选择功能已初始化！');
+  console.log('截屏功能已初始化！');
   console.log('- 按 Cmd+Shift+K (Mac) 或 Ctrl+Shift+K (Windows) 截屏');
-  console.log('- 选中任意文字后，按 Cmd+Shift+Y (Mac) 或 Ctrl+Shift+Y (Windows) 自动复制并注入到输入框');
-  console.log('- 注意：macOS 需要在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用，才能自动复制选中文字');
 }

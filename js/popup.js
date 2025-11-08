@@ -1460,14 +1460,24 @@ const initializeBar = async () => {
   // 渲染底部导航栏
   await renderProviderTabs(currentProviderKey);
 
-  // 监听窗口尺寸变化，持续把侧边栏实际宽度同步给主进程
+  // 监听窗口尺寸变化，持续把侧边栏实际宽度同步给主进程（带节流 + 可锁定）
   try {
+    let __lastSidebarWidth = -1;
+    let __lastReportAt = 0;
     const reportSidebarWidth = () => {
       try {
         const el = document.getElementById('provider-tabs');
         if (!el) return;
-        const w = Math.round((el.getBoundingClientRect && el.getBoundingClientRect().width) || 0);
-        if (window.electronAPI?.setSidebarWidth) window.electronAPI.setSidebarWidth(w);
+        // 允许锁定：localStorage.insidebar_lock_sidebar_width = '1' 时不再上报
+        try { if (localStorage.getItem('insidebar_lock_sidebar_width') === '1') return; } catch (_) {}
+        const w = Math.round(el.offsetWidth || (el.getBoundingClientRect && el.getBoundingClientRect().width) || 0);
+        const clamped = Math.max(0, Math.min(120, w));
+        const now = Date.now();
+        // 变化需超过 2px 且至少 400ms 才上报，避免抖动导致 BrowserView 左移右移
+        if (Math.abs(clamped - __lastSidebarWidth) >= 2 && (now - __lastReportAt >= 400)) {
+          if (window.electronAPI?.setSidebarWidth) window.electronAPI.setSidebarWidth(clamped);
+          __lastSidebarWidth = clamped; __lastReportAt = now;
+        }
       } catch (_) {}
     };
     window.addEventListener('resize', reportSidebarWidth);
@@ -1947,6 +1957,8 @@ const initializeBar = async () => {
   try {
     const hBtn = document.getElementById('historyBtn');
     const panel = document.getElementById('historyPanel');
+    const shouldUseOverlay = () => { try { return !(localStorage.getItem('insidebar_no_overlay') === '1'); } catch (_) { return true; } };
+    let __historyOpen = false;
   const ensureBackdrop = () => {
       let bd = document.getElementById('historyBackdrop');
       if (!bd) {
@@ -1968,12 +1980,18 @@ const initializeBar = async () => {
       await renderHistoryPanel();
       panel.style.display = 'block';
       ensureBackdrop();
-      try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
+      if (!__historyOpen && shouldUseOverlay()) {
+        try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
+      }
+      __historyOpen = true;
     };
     const hideHistoryPanel = () => {
       panel.style.display = 'none';
       removeBackdrop();
-      try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
+      if (__historyOpen && shouldUseOverlay()) {
+        try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
+      }
+      __historyOpen = false;
     };
     window.hideHistoryPanel = hideHistoryPanel; // expose for other handlers if needed
     window.showHistoryPanel = showHistoryPanel;
@@ -1997,6 +2015,8 @@ const initializeBar = async () => {
   try {
     const fBtn = document.getElementById('favoritesBtn');
     const panel = document.getElementById('favoritesPanel');
+    const shouldUseOverlay = () => { try { return !(localStorage.getItem('insidebar_no_overlay') === '1'); } catch (_) { return true; } };
+    let __favoritesOpen = false;
     const isTyping = () => {
       const el = document.activeElement;
       if (!el) return false;
@@ -2038,12 +2058,18 @@ const initializeBar = async () => {
       await renderFavoritesPanel();
       panel.style.display = 'block';
       ensureBackdrop();
-      try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
+      if (!__favoritesOpen && shouldUseOverlay()) {
+        try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
+      }
+      __favoritesOpen = true;
     };
     const hideFavoritesPanel = () => {
       panel.style.display = 'none';
       removeBackdrop();
-      try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
+      if (__favoritesOpen && shouldUseOverlay()) {
+        try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
+      }
+      __favoritesOpen = false;
     };
     window.hideFavoritesPanel = hideFavoritesPanel;
     window.showFavoritesPanel = showFavoritesPanel;
@@ -2565,6 +2591,37 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
   });
 }
 
+// 当应用获得焦点/显示时，尽力把光标送回到当前 provider 的输入框
+(function initFocusRecovery(){
+  try {
+    const enabled = (()=>{ try { const v = localStorage.getItem('insidebar_focus_on_activate'); return v === null || v === '1'; } catch(_) { return true; } })();
+    if (!enabled) return;
+    const stickyRefocus = (ms) => {
+      try {
+        const dur = Math.max(120, Math.min(1500, Number(ms) || Number(localStorage.getItem('insidebar_sticky_focus_ms')) || 480));
+        const step = 90; const n = Math.ceil(dur/step);
+        // 1) BrowserView 模式：请求主进程在 Provider 页内直接 focus 提示输入框
+        if (IS_ELECTRON && window.electronAPI?.focusPrompt) {
+          for (let i=0;i<n;i++) setTimeout(()=>{ try { window.electronAPI.focusPrompt(); } catch (_) {} }, i*step);
+        }
+        // 2) iframe/webview 模式：postMessage 触发 focus
+        try {
+          const iframeContainer = document.getElementById('iframe');
+          const target = iframeContainer?.querySelector('[data-provider]:not([style*="display: none"])');
+          if (target && target.contentWindow) {
+            const poke = () => { try { target.contentWindow.postMessage({ type: 'AI_SIDEBAR_FOCUS' }, '*'); } catch(_){} };
+            for (let i=0;i<n;i++) setTimeout(poke, i*step);
+          }
+        } catch (_) {}
+      } catch (_) {}
+    };
+    if (IS_ELECTRON && window.electronAPI) {
+      window.electronAPI.onAppFocus?.(()=> stickyRefocus());
+      window.electronAPI.onAppVisibility?.((p)=>{ if (p && p.state === 'shown') stickyRefocus(); });
+    }
+  } catch (_) {}
+})();
+
 // ============== 来自后台的消息与待处理队列 ==============
 (function initRuntimeMessages() {
   function getActiveProviderFrame() {
@@ -2610,30 +2667,80 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     } catch (_) {}
   }
 
+  let __lastRouteInsertAt = 0;
+  let __lastRouteInsertTextHash = '';
   function routeInsertText(msg) {
     try {
+      // 🔍 调试日志：记录插入文本的开始
+      console.log('[INSERT_TEXT] 开始插入文本，时间戳:', Date.now());
+      
+      // 🔍 参考 Full-screen-prompt 项目：不操作窗口焦点，只操作编辑器焦点
+      // 简单去抖：500ms 内重复相同内容不再重复注入
+      const text = String(msg && msg.text || '');
+      const now = Date.now();
+      const hash = (()=>{ try { return String(text).slice(0,64)+'#'+text.length; } catch(_) { return String(text).length; }})();
+      if (now - __lastRouteInsertAt < 500 && hash === __lastRouteInsertTextHash) {
+        console.log('[INSERT_TEXT] 去抖跳过，距离上次插入:', now - __lastRouteInsertAt, 'ms');
+        return;
+      }
+      __lastRouteInsertAt = now; __lastRouteInsertTextHash = hash;
       const target = getActiveProviderFrame();
       if (!target || !target.contentWindow) {
         toast('未找到活动的 AI 面板。', 'warn');
         return;
       }
+      
+      // 🔍 关键修复：参考 Full-screen-prompt，不调用 window.focus()
+      // 只通过 postMessage 通知 iframe 内部聚焦编辑器，不改变窗口焦点
+      // 这样可以避免窗口焦点变化导致的跳动
+      
       // 尽量把焦点转入侧栏与 iframe
-      try { window.focus(); } catch (_) {}
-      try { document.body.tabIndex = -1; document.body.focus(); } catch (_) {}
-      try { target.focus(); } catch (_) {}
-      try { target.contentWindow.focus(); } catch (_) {}
-      // 追加并要求聚焦
+      const gentle = (() => {
+        try {
+          const aggr = localStorage.getItem('insidebar_aggressive_focus') === '1';
+          const gentleFlag = localStorage.getItem('insidebar_gentle_focus');
+          // 默认采用温和模式；若显式开启 aggressive 则关闭温和
+          return aggr ? false : (gentleFlag === '1' || gentleFlag === null);
+        } catch (_) { return true; }
+      })();
+      
+      console.log('[INSERT_TEXT] 焦点模式:', gentle ? 'gentle' : 'aggressive');
+      
+      // 🔍 关键修复：不调用 window.focus()，避免窗口焦点变化
+      // 只聚焦 iframe 元素本身，不聚焦窗口
+      if (!gentle) {
+        console.log('[INSERT_TEXT] 执行焦点操作（aggressive模式，但不操作窗口焦点）');
+        // 只聚焦 iframe，不聚焦窗口
+        try { target.focus(); console.log('[INSERT_TEXT] target.focus() 调用'); } catch (e) { console.log('[INSERT_TEXT] target.focus() 失败:', e); }
+        // 不调用 window.focus() 和 document.body.focus()
+        // 不调用 target.contentWindow.focus()，因为这可能导致窗口焦点变化
+      }
+      
+      // 追加并要求聚焦（通过 postMessage，让 iframe 内部处理焦点）
       target.contentWindow.postMessage({ type: 'AI_SIDEBAR_INSERT', text: msg.text || '', mode: 'append', focus: true }, '*');
 
       // 多次尝试确保焦点最终在输入框（处理面板刚打开或站点懒加载）
       const pokeFocus = () => {
         try {
+          console.log('[INSERT_TEXT] pokeFocus 调用，时间戳:', Date.now());
+          // 只聚焦 iframe，不聚焦窗口
           target.focus();
           target.contentWindow?.postMessage({ type: 'AI_SIDEBAR_FOCUS' }, '*');
-        } catch (_) {}
+        } catch (e) {
+          console.log('[INSERT_TEXT] pokeFocus 失败:', e);
+        }
       };
-      const attempts = [40, 120, 240, 420, 700];
-      attempts.forEach((ms)=> setTimeout(pokeFocus, ms));
+      
+      if (!gentle) {
+        console.log('[INSERT_TEXT] 安排多次 pokeFocus（aggressive模式）:', [40, 120, 240, 420, 700]);
+        [40, 120, 240, 420, 700].forEach((ms)=> setTimeout(pokeFocus, ms));
+      } else {
+        // 温和模式：避免多次抢焦点，降低与提示词悬浮窗的冲突
+        // 仅在必要场景轻触一次
+        console.log('[INSERT_TEXT] 安排单次 pokeFocus（gentle模式）:', 160);
+        setTimeout(pokeFocus, 160);
+      }
+      
       toast('已将选中文本注入输入框');
     } catch (e) {
       toast('注入失败：' + String(e), 'error');
@@ -2660,10 +2767,22 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
       toast('截图已加载到输入框');
       
       // 聚焦到 iframe
-      try { window.focus(); } catch (_) {}
-      try { document.body.tabIndex = -1; document.body.focus(); } catch (_) {}
-      try { target.focus(); } catch (_) {}
-      try { target.contentWindow.focus(); } catch (_) {}
+      const gentle = (() => {
+        try {
+          const aggr = localStorage.getItem('insidebar_aggressive_focus') === '1';
+          const gentleFlag = localStorage.getItem('insidebar_gentle_focus');
+          return aggr ? false : (gentleFlag === '1' || gentleFlag === null);
+        } catch (_) { return true; }
+      })();
+      if (!gentle) {
+        try { window.focus(); } catch (_) {}
+        try { document.body.tabIndex = -1; document.body.focus(); } catch (_) {}
+        try { target.focus(); } catch (_) {}
+        try { target.contentWindow.focus(); } catch (_) {}
+      } else {
+        // 温和模式下不再主动抢系统焦点，仅在 iframe 内部处理
+        try { target.focus(); } catch (_) {}
+      }
     } catch (e) {
       toast('加载截图失败：' + String(e), 'error');
     }
@@ -2679,19 +2798,39 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
           return;
         }
         if (message.type === 'aisb.insert-text') {
+          console.log('[MESSAGE_LISTENER] 收到 aisb.insert-text 消息:', { 
+            text_length: message.text?.length || 0,
+            mode: message.mode || 'append',
+            timestamp: Date.now()
+          });
           routeInsertText(message);
           return;
         }
         if (message.type === 'aisb.focus-only') {
           const target = getActiveProviderFrame();
           if (target && target.contentWindow) {
-            try { window.focus(); } catch (_) {}
-            try { document.body.tabIndex = -1; document.body.focus(); } catch (_) {}
-            try { target.focus(); } catch (_) {}
-            try { target.contentWindow.focus(); } catch (_) {}
+            const gentle = (() => {
+              try {
+                const aggr = localStorage.getItem('insidebar_aggressive_focus') === '1';
+                const gentleFlag = localStorage.getItem('insidebar_gentle_focus');
+                return aggr ? false : (gentleFlag === '1' || gentleFlag === null);
+              } catch (_) { return true; }
+            })();
+            if (!gentle) {
+              try { window.focus(); } catch (_) {}
+              try { document.body.tabIndex = -1; document.body.focus(); } catch (_) {}
+              try { target.focus(); } catch (_) {}
+              try { target.contentWindow.focus(); } catch (_) {}
+            } else {
+              try { target.focus(); } catch (_) {}
+            }
             try { target.contentWindow.postMessage({ type: 'AI_SIDEBAR_FOCUS' }, '*'); } catch (_) {}
             const poke = () => { try { target.focus(); target.contentWindow?.postMessage({ type: 'AI_SIDEBAR_FOCUS' }, '*'); } catch (_) {} };
-            ;[40,120,240,420,700,1000].forEach(ms => setTimeout(poke, ms));
+            if (!gentle) {
+              [40,120,240,420,700,1000].forEach(ms => setTimeout(poke, ms));
+            } else {
+              setTimeout(poke, 160);
+            }
           }
           return;
         }

@@ -3,9 +3,34 @@
 This document records common issues encountered during development and their solutions.
 
 ## Table of Contents
+- [Prompt Injection Flicker](#prompt-injection-flicker)
 - [NotebookLM Title Capture](#notebooklm-title-capture)
 
 ---
+
+## Prompt Injection Flicker
+
+### Problem
+When inserting prompt text into the AI provider’s input, the provider’s own suggestion overlay/floating panel flickers or appears/disappears repeatedly.
+
+### Root Cause
+To improve reliability, the sidebar tried multiple focus attempts in a short time window to ensure the input becomes active. Some provider UIs or third‑party prompt overlays watch focus/blur very closely and react to these repeated focus changes, causing flicker.
+
+### Solution
+- A gentle focus mode is supported to reduce repeated focus attempts.
+  - Enable: run in DevTools console of the sidebar window: `localStorage.setItem('insidebar_gentle_focus','1')` and reload the sidebar.
+  - Disable/restore default: `localStorage.removeItem('insidebar_gentle_focus')`
+- Content script now debounces focus/insert handling (`AI_SIDEBAR_INSERT`, `AI_SIDEBAR_FOCUS`, `AI_SIDEBAR_PROXY_TYPE`) to avoid rapid re‑focus.
+
+### Files Changed
+- `js/popup.js`: optional gentle focus for text and image injection.
+- `content-scripts/url-sync.js`: debounced input focusing and insertion throttling.
+
+### Testing
+1. Enable gentle focus as above.
+2. Trigger prompt insertion (via context menu/shortcut) and observe the provider’s overlay stability.
+3. If still flickering, verify no other extensions are programmatically focusing the same input, then try disabling gentle focus to compare behavior.
+
 
 ## NotebookLM Title Capture
 

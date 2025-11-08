@@ -11,6 +11,43 @@
       } catch (_) {}
     };
 
+    // Debounced focusing to avoid flicker in sites with prompt overlays
+    let __aisbLastFocusAt = 0;
+    const focusIfNeeded = (el, allowRapid = false) => {
+      try {
+        const now = Date.now();
+        if (document.activeElement === el) return;
+        if (!allowRapid && now - __aisbLastFocusAt < 250) return;
+        
+        // 🔍 关键修复：检查页面加载状态，避免在页面加载时触发焦点变化
+        // 如果页面还在加载中，延迟焦点操作
+        if (document.readyState !== 'complete') {
+          // 页面未完全加载，延迟执行焦点操作
+          setTimeout(() => {
+            try {
+              if (document.activeElement !== el && document.readyState === 'complete') {
+                el.focus();
+                try { placeCaretAtEnd(el); } catch (_) {}
+              }
+            } catch (_) {}
+          }, 100);
+          return;
+        }
+        
+        // 🔍 关键修复：使用 requestAnimationFrame 确保在页面稳定后执行焦点操作
+        // 这样可以避免在页面渲染过程中触发焦点变化导致的窗口跳动
+        requestAnimationFrame(() => {
+          try {
+            if (document.activeElement !== el) {
+              el.focus();
+              try { placeCaretAtEnd(el); } catch (_) {}
+            }
+          } catch (_) {}
+        });
+        __aisbLastFocusAt = now;
+      } catch (_) {}
+    };
+
     // BFS across DOM + open shadow roots (helps with web components)
     const deepFind = (root, predicate, max = 2000) => {
       try {
@@ -855,18 +892,34 @@
             insertText = '\n' + insertText;
           }
         } catch (_) {}
-        // Prefer execCommand for better site compatibility
+        // Prefer synthetic paste for better editor compatibility
+        try {
+          const dt = new DataTransfer();
+          if (dt.setData) dt.setData('text/plain', insertText);
+          const pasteEvt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+          try { Object.defineProperty(pasteEvt, 'clipboardData', { get: () => dt }); } catch (_) {}
+          // If site handles paste, we skip execCommand path
+          if (el.dispatchEvent(pasteEvt)) {
+            placeCaretAtEnd(el);
+            return true;
+          }
+        } catch (_) {}
+        // Fallback: execCommand for better site compatibility
         let ok = false;
-        try { ok = document.execCommand('insertText', false, insertText); } catch (_) { ok = false; }
+        let usedExec = false;
+        try { ok = document.execCommand('insertText', false, insertText); usedExec = usedExec || ok; } catch (_) { ok = false; }
         if (!ok) {
-          try { ok = document.execCommand('insertHTML', false, insertText.replace(/\n/g, '<br>')); } catch (_) { ok = false; }
+          try { ok = document.execCommand('insertHTML', false, insertText.replace(/\n/g, '<br>')); usedExec = usedExec || ok; } catch (_) { ok = false; }
         }
         if (!ok) {
           try { el.appendChild(document.createTextNode(insertText)); } catch (_) {}
         }
         placeCaretAtEnd(el);
-        try { el.lastChild && el.lastChild.scrollIntoView({ block: 'nearest' }); } catch(_) {}
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: insertText }));
+        // 避免主动滚动导致页面局部重绘，可能触发站点悬浮层抖动
+        // Avoid double-firing input when execCommand already generated it
+        if (!usedExec) {
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: insertText }));
+        }
         return true;
       }
       // last resort
@@ -883,11 +936,26 @@
       if (!data || (data.type !== 'AI_SIDEBAR_INSERT' && data.type !== 'AI_SIDEBAR_FOCUS')) return;
       const el = findPromptElement();
       if (!el) return;
+      // Skip if insertion events come too frequently (guards against rapid toggle loops)
+      if (!window.__aisbLastInsertAt) window.__aisbLastInsertAt = 0;
+      const now = Date.now();
+      if (data.type === 'AI_SIDEBAR_INSERT' && (now - window.__aisbLastInsertAt < 100)) return;
       if (data.type === 'AI_SIDEBAR_INSERT') {
         setElementText(el, data.text || '', data.mode || 'append');
-        if (data.focus !== false) { try { el.focus(); placeCaretAtEnd(el); } catch (_) {} }
+        // 🔍 关键修复：延迟焦点操作，确保文本插入完成后再聚焦
+        // 这样可以避免在插入过程中触发焦点变化导致的窗口跳动
+        if (data.focus !== false) {
+          // 使用 setTimeout 延迟，确保 DOM 更新完成
+          setTimeout(() => {
+            focusIfNeeded(el, false);
+          }, 50);
+        }
+        window.__aisbLastInsertAt = now;
       } else if (data.type === 'AI_SIDEBAR_FOCUS') {
-        try { el.focus(); placeCaretAtEnd(el); } catch (_) {}
+        // 🔍 关键修复：延迟焦点操作
+        setTimeout(() => {
+          focusIfNeeded(el, false);
+        }, 50);
       }
     } catch (_) {}
   });
@@ -902,14 +970,12 @@
       const payload = data.payload || {};
       if (payload.kind === 'text' && typeof payload.text === 'string') {
         setElementText(el, payload.text, 'append');
-        try { el.focus(); placeCaretAtEnd(el); } catch (_) {}
+        focusIfNeeded(el, false);
       } else if (payload.kind === 'newline') {
         setElementText(el, '\n', 'append');
-        try { el.focus(); placeCaretAtEnd(el); } catch (_) {}
+        focusIfNeeded(el, false);
       } else if (payload.kind === 'submit') {
-        try {
-          el.focus(); placeCaretAtEnd(el);
-        } catch (_) {}
+        focusIfNeeded(el, true);
         // Provider-specific send button attempts
         try {
           const candidates = [
@@ -928,18 +994,10 @@
             try { btn = document.querySelector(sel); } catch (_) { btn = null; }
             if (btn) break;
           }
-          if (btn) {
-            try { btn.click(); return; } catch (_) {}
-          }
-        } catch (_) {}
-        // Fallback: synthesize Enter key on element
-        try {
-          const evOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-          el.dispatchEvent(new KeyboardEvent('keydown', evOpts));
-          el.dispatchEvent(new KeyboardEvent('keypress', evOpts));
-          el.dispatchEvent(new KeyboardEvent('keyup', evOpts));
-        } catch (_) {}
-      } else if (payload.kind === 'backspace') {
+          if (btn) { try { btn.click(); return; } catch (_) {} }
+        } catch (_) {}        // No unsafe fallback; require explicit send button
+        console.warn('[AI Sidebar] No send button found; not auto-submitting');
+} else if (payload.kind === 'backspace') {
         try {
           const tag = (el.tagName||'').toLowerCase();
           if (tag === 'textarea' || (el.value !== undefined && typeof el.value === 'string')) {

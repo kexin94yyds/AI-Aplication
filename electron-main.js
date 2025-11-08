@@ -27,6 +27,8 @@ let topInset = 50; // 基础工具栏高度
 // 记住窗口位置（参考 RI 项目）
 let lastWindowPosition = null; // 存储上次窗口位置 { x, y }
 let lastShowAt = 0; // 记录最近一次显示时间，用于忽略刚显示时的 blur
+let isInsertingText = false; // 标记是否正在插入文本，防止窗口位置被意外修改
+let windowPositionLock = false; // 窗口位置锁定标志，防止在特定操作时位置被改变
 
 // ============== 与插件数据同步（JSON 文件） ==============
 const DEFAULT_SYNC_DIR = '/Users/apple/AI-sidebar 更新/AI-Sidebar';
@@ -186,6 +188,7 @@ function detachBrowserView() {
   try {
     if (mainWindow && currentBrowserView) {
       mainWindow.removeBrowserView(currentBrowserView);
+      try { mainWindow.webContents.send('overlay-browserview', { action: 'detach', ts: Date.now() }); } catch (_) {}
     }
   } catch (e) { console.error('detachBrowserView error:', e); }
 }
@@ -194,6 +197,7 @@ function attachBrowserView() {
     if (mainWindow && currentBrowserView) {
       mainWindow.addBrowserView(currentBrowserView);
       updateBrowserViewBounds();
+      try { mainWindow.webContents.send('overlay-browserview', { action: 'attach', ts: Date.now() }); } catch (_) {}
     }
   } catch (e) { console.error('attachBrowserView error:', e); }
 }
@@ -254,12 +258,86 @@ function createWindow() {
     updateBrowserViewBounds();
   });
 
+  // 窗口获得焦点时通知渲染进程做输入框回焦
+  try {
+    mainWindow.on('focus', () => {
+      const pos = mainWindow.getPosition();
+      const bounds = mainWindow.getBounds();
+      const isOnTop = mainWindow.isAlwaysOnTop();
+      
+      // 🔍 关键修复：如果窗口位置被锁定，检查并恢复位置
+      if (windowPositionLock && lastWindowPosition) {
+        if (pos[0] !== lastWindowPosition.x || pos[1] !== lastWindowPosition.y) {
+          console.warn('[WINDOW_FOCUS] ⚠️ 焦点变化时位置被改变，强制恢复:', {
+            expected: lastWindowPosition,
+            actual: { x: pos[0], y: pos[1] }
+          });
+          mainWindow.setPosition(lastWindowPosition.x, lastWindowPosition.y);
+        }
+      }
+      
+      console.log('[WINDOW_FOCUS] 窗口获得焦点:', {
+        position: { x: pos[0], y: pos[1] },
+        bounds: bounds,
+        isAlwaysOnTop: isOnTop,
+        locked: windowPositionLock,
+        timestamp: Date.now()
+      });
+      // 🔍 关键：焦点变化时不要重新设置窗口位置或层级，避免跳动
+      // 只在必要时通知渲染进程
+      try { mainWindow.webContents.send('app-focus', { ts: Date.now() }); } catch (_) {}
+    });
+  } catch (_) {}
+  
+  // 🔍 参考 Full-screen-prompt 项目：延迟检查，忽略刚显示后的短暂失焦
+  try {
+    mainWindow.on('blur', () => {
+      // 刚显示后的短暂失焦（切 Space/全屏/层级切换）容易导致瞬间隐藏，需忽略
+      const elapsed = Date.now() - lastShowAt;
+      if (elapsed < 800) {
+        console.log('[WINDOW_BLUR] 忽略刚显示后的短暂失焦，距离显示:', elapsed, 'ms');
+        return;
+      }
+      
+      // 不在这里隐藏窗口，保持窗口显示（参考项目也不在 blur 时隐藏）
+      // 这样可以避免插入文本时的焦点变化导致窗口隐藏
+    });
+  } catch (_) {}
+
   // 监听窗口移动，保存位置
   mainWindow.on('move', () => {
     if (isShowing && mainWindow) {
       const pos = mainWindow.getPosition();
+      const oldPos = lastWindowPosition ? { ...lastWindowPosition } : null;
+      
+      // 🔍 关键修复：如果窗口位置被锁定（比如正在插入文本），不要保存新位置
+      if (windowPositionLock) {
+        console.log('[WINDOW_MOVE] ⚠️ 窗口位置已锁定，忽略移动事件:', {
+          old: oldPos,
+          new: { x: pos[0], y: pos[1] },
+          timestamp: Date.now()
+        });
+        // 如果位置确实改变了，立即恢复
+        if (oldPos && (pos[0] !== oldPos.x || pos[1] !== oldPos.y)) {
+          console.warn('[WINDOW_MOVE] ⚠️ 检测到位置变化，强制恢复:', {
+            expected: oldPos,
+            actual: { x: pos[0], y: pos[1] }
+          });
+          mainWindow.setPosition(oldPos.x, oldPos.y);
+        }
+        return;
+      }
+      
       lastWindowPosition = { x: pos[0], y: pos[1] };
-      console.log('窗口位置已保存:', lastWindowPosition);
+      // 🔍 调试日志：记录窗口移动的来源
+      const stack = new Error().stack;
+      const caller = stack ? stack.split('\n')[2]?.trim() : 'unknown';
+      console.log('[WINDOW_MOVE] 窗口位置已保存:', {
+        old: oldPos,
+        new: lastWindowPosition,
+        caller: caller,
+        timestamp: Date.now()
+      });
     }
   });
 
@@ -294,6 +372,13 @@ function getOrCreateBrowserView(providerKey) {
       enableRemoteModule: false,
     }
   });
+
+  // 可选：为 BrowserView 打开独立 DevTools 便于调试（命令行 --view-dev 或环境变量 AISB_VIEW_DEVTOOLS=1）
+  try {
+    if (process.argv.includes('--view-dev') || process.env.AISB_VIEW_DEVTOOLS === '1') {
+      setTimeout(() => { try { view.webContents.openDevTools({ mode: 'detach' }); } catch (_) {} }, 500);
+    }
+  } catch (_) {}
 
   // 加载 URL
   view.webContents.loadURL(provider.url);
@@ -653,59 +738,189 @@ function toggleFullWidth() {
 // 显示窗口（直接显示，不使用动画）
 // 参考 RI 项目实现：https://github.com/kexin94yyds/RI.git (showOnActiveSpace 函数)
 function showWindow() {
-  if (!mainWindow || isShowing) return;
-  
-  isShowing = true;
-  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-  const { width: windowWidth } = mainWindow.getBounds();
-  
-  // 使用上次保存的位置，如果没有则默认在右侧
-  let targetX, targetY;
-  if (lastWindowPosition) {
-    targetX = lastWindowPosition.x;
-    targetY = lastWindowPosition.y;
-    console.log('使用上次保存的位置:', lastWindowPosition);
-  } else {
-    // 默认在右侧
-    targetX = screenWidth - windowWidth;
-    targetY = 0;
-    lastWindowPosition = { x: targetX, y: targetY };
+  if (!mainWindow || isShowing) {
+    console.log('[SHOW_WINDOW] 跳过：窗口不存在或已显示', { mainWindow: !!mainWindow, isShowing });
+    return;
   }
   
-  // 设置窗口位置
-  mainWindow.setPosition(targetX, targetY);
+  // 🔍 调试日志：记录调用栈
+  const stack = new Error().stack;
+  const caller = stack ? stack.split('\n')[2]?.trim() : 'unknown';
+  console.log('[SHOW_WINDOW] 开始显示窗口，调用来源:', caller);
+  
+  // 🔍 关键修复：如果窗口已经可见且在合理位置，不要移动它
+  // 这样可以避免在插入文本时触发不必要的位置变化
+  const wasVisible = mainWindow.isVisible();
+  isShowing = true;
+  
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+  const { width: windowWidth } = mainWindow.getBounds();
+  const currentPos = mainWindow.getPosition();
+  
+  let targetX, targetY;
+  
+  // 检查当前位置是否合理（在屏幕范围内）
+  const isCurrentPositionValid = currentPos[0] >= 0 && 
+                                  currentPos[0] < screenWidth && 
+                                  currentPos[1] >= 0 && 
+                                  currentPos[1] < screenHeight;
+  
+  if (wasVisible && isCurrentPositionValid) {
+    // 如果窗口已经可见且位置合理，保持当前位置不动
+    targetX = currentPos[0];
+    targetY = currentPos[1];
+    console.log('[SHOW_WINDOW] 窗口已可见且位置合理，保持不动:', { x: targetX, y: targetY });
+  } else if (lastWindowPosition) {
+    targetX = lastWindowPosition.x;
+    targetY = lastWindowPosition.y;
+    console.log('[SHOW_WINDOW] 使用上次保存的位置:', {
+      saved: lastWindowPosition,
+      current: { x: currentPos[0], y: currentPos[1] },
+      willSet: { x: targetX, y: targetY }
+    });
+  } else {
+    // 默认在右侧，注意：macOS 菜单栏高度约 38px，使用 0 会被系统自动调整
+    // 为了避免不必要的位置调整，我们直接使用菜单栏高度作为默认 y 坐标
+    const menuBarHeight = 38; // macOS 菜单栏标准高度
+    targetX = screenWidth - windowWidth;
+    targetY = menuBarHeight;
+    lastWindowPosition = { x: targetX, y: targetY };
+    console.log('[SHOW_WINDOW] 使用默认位置（右侧，考虑菜单栏）:', lastWindowPosition);
+  }
+  
+  // 🔍 关键修复：只有在位置确实需要改变时才设置
+  // 避免不必要的 setPosition 调用导致的跳动
+  const needsMove = currentPos[0] !== targetX || currentPos[1] !== targetY;
+  
+  if (needsMove) {
+    console.log('[SHOW_WINDOW] 需要移动窗口:', {
+      from: { x: currentPos[0], y: currentPos[1] },
+      to: { x: targetX, y: targetY }
+    });
+    
+    // 使用 setPosition 而不是 setBounds，更简单直接
+    mainWindow.setPosition(targetX, targetY);
+    
+    // 🔍 验证：setPosition 后立即检查位置
+    const afterSetPos = mainWindow.getPosition();
+    console.log('[SHOW_WINDOW] ✓ setPosition() 后位置:', { 
+      expected: { x: targetX, y: targetY },
+      actual: { x: afterSetPos[0], y: afterSetPos[1] },
+      drift: { x: afterSetPos[0] - targetX, y: afterSetPos[1] - targetY }
+    });
+  } else {
+    console.log('[SHOW_WINDOW] 窗口位置已正确，跳过移动');
+  }
+  
+  // 保存当前位置
+  lastWindowPosition = { x: targetX, y: targetY };
   
   // 🔑 关键：每次显示时都要设置这些，确保窗口覆盖在当前应用上
   // 参考 RI 项目的做法，不依赖状态，每次都重新设置
+  
+  // 🔍 验证：在设置属性前记录位置
+  const beforeAttributesPos = mainWindow.getPosition();
+  console.log('[SHOW_WINDOW] 设置窗口属性前位置:', { x: beforeAttributesPos[0], y: beforeAttributesPos[1] });
+  
   try {
     // 1. 临时在所有工作区可见（含全屏），避免跳回旧 Space
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    
+    // 🔍 验证：setVisibleOnAllWorkspaces 后检查位置
+    const afterWorkspacePos = mainWindow.getPosition();
+    const workspaceDrift = { x: afterWorkspacePos[0] - beforeAttributesPos[0], y: afterWorkspacePos[1] - beforeAttributesPos[1] };
+    console.log('[SHOW_WINDOW] ✓ setVisibleOnAllWorkspaces() 后位置:', { 
+      before: { x: beforeAttributesPos[0], y: beforeAttributesPos[1] },
+      after: { x: afterWorkspacePos[0], y: afterWorkspacePos[1] },
+      drift: workspaceDrift,
+      hasDrift: workspaceDrift.x !== 0 || workspaceDrift.y !== 0
+    });
   } catch (e) {
     console.error('设置工作区可见性失败:', e);
   }
   
   try {
+    const beforeAlwaysOnTopPos = mainWindow.getPosition();
+    
     // 2. 使用 floating 层级（可交互），而不是 screen-saver（太高无法交互）
-    // 如果用户点击了置顶按钮，则会在按钮事件中切换到 screen-saver
     mainWindow.setAlwaysOnTop(true, 'floating');
+    
+    // 🔍 验证：setAlwaysOnTop 后检查位置
+    const afterAlwaysOnTopPos = mainWindow.getPosition();
+    const alwaysOnTopDrift = { x: afterAlwaysOnTopPos[0] - beforeAlwaysOnTopPos[0], y: afterAlwaysOnTopPos[1] - beforeAlwaysOnTopPos[1] };
+    console.log('[SHOW_WINDOW] ✓ setAlwaysOnTop() 后位置:', { 
+      before: { x: beforeAlwaysOnTopPos[0], y: beforeAlwaysOnTopPos[1] },
+      after: { x: afterAlwaysOnTopPos[0], y: afterAlwaysOnTopPos[1] },
+      drift: alwaysOnTopDrift,
+      hasDrift: alwaysOnTopDrift.x !== 0 || alwaysOnTopDrift.y !== 0
+    });
   } catch (e) {
     console.error('设置置顶失败:', e);
   }
   
+  const beforeShowPos = mainWindow.getPosition();
+  console.log('[SHOW_WINDOW] show() 前位置:', { x: beforeShowPos[0], y: beforeShowPos[1] });
+  
   mainWindow.show();
+  
+  // 🔍 验证：show() 后检查位置
+  const afterShowPos = mainWindow.getPosition();
+  const showDrift = { x: afterShowPos[0] - beforeShowPos[0], y: afterShowPos[1] - beforeShowPos[1] };
+  console.log('[SHOW_WINDOW] ✓ show() 后位置:', { 
+    before: { x: beforeShowPos[0], y: beforeShowPos[1] },
+    after: { x: afterShowPos[0], y: afterShowPos[1] },
+    drift: showDrift,
+    hasDrift: showDrift.x !== 0 || showDrift.y !== 0
+  });
+  
+  // 🔑 关键修复：如果 show() 导致位置漂移（通常是 y: 0 → y: 38 避免菜单栏）
+  // 我们应该接受系统调整，并更新目标位置，避免下次触发不必要的移动
+  if (showDrift.x !== 0 || showDrift.y !== 0) {
+    console.log('[SHOW_WINDOW] ⚠️ show() 导致位置漂移（macOS 自动调整）');
+    // 更新目标位置为实际位置，这样下次 move 事件不会误判
+    lastWindowPosition = { x: afterShowPos[0], y: afterShowPos[1] };
+  }
+  
   mainWindow.focus();
+  
+  // 🔍 验证：focus() 后检查位置
+  const afterFocusPos = mainWindow.getPosition();
+  const focusDrift = { x: afterFocusPos[0] - afterShowPos[0], y: afterFocusPos[1] - afterShowPos[1] };
+  console.log('[SHOW_WINDOW] ✓ focus() 后位置:', { 
+    before: { x: afterShowPos[0], y: afterShowPos[1] },
+    after: { x: afterFocusPos[0], y: afterFocusPos[1] },
+    drift: focusDrift,
+    hasDrift: focusDrift.x !== 0 || focusDrift.y !== 0
+  });
+  
   lastShowAt = Date.now(); // 记录显示时间
+  
+  try { mainWindow.webContents.send('app-visibility', { state: 'shown', ts: Date.now() }); } catch (_) {}
   
   // 3. 200ms 后还原工作区可见性，仅在当前 Space 可见
   setTimeout(() => {
     try {
+      const beforeRestorePos = mainWindow.getPosition();
+      console.log('[SHOW_WINDOW] 200ms后还原工作区可见性前位置:', { x: beforeRestorePos[0], y: beforeRestorePos[1] });
+      
       mainWindow.setVisibleOnAllWorkspaces(false);
+      
+      // 🔍 验证：还原后检查位置
+      const afterRestorePos = mainWindow.getPosition();
+      const restoreDrift = { x: afterRestorePos[0] - beforeRestorePos[0], y: afterRestorePos[1] - beforeRestorePos[1] };
+      console.log('[SHOW_WINDOW] ✓ setVisibleOnAllWorkspaces(false) 后位置:', { 
+        before: { x: beforeRestorePos[0], y: beforeRestorePos[1] },
+        after: { x: afterRestorePos[0], y: afterRestorePos[1] },
+        drift: restoreDrift,
+        hasDrift: restoreDrift.x !== 0 || restoreDrift.y !== 0
+      });
     } catch (e) {
       console.error('还原工作区可见性失败:', e);
     }
   }, 200);
   
   console.log('窗口已显示，层级: floating（可交互）');
+  console.log('[SHOW_WINDOW] ========== 显示完成 ==========');
 }
 
 // 隐藏窗口（直接隐藏，不使用动画）
@@ -714,11 +929,17 @@ function hideWindow() {
   
   // 保存当前位置
   const currentBounds = mainWindow.getBounds();
+  const oldPos = lastWindowPosition ? { ...lastWindowPosition } : null;
   lastWindowPosition = { x: currentBounds.x, y: currentBounds.y };
-  console.log('保存窗口位置:', lastWindowPosition);
+  console.log('[HIDE_WINDOW] 保存窗口位置:', {
+    old: oldPos,
+    new: lastWindowPosition,
+    timestamp: Date.now()
+  });
   
   mainWindow.hide();
   isShowing = false;
+  try { mainWindow.webContents.send('app-visibility', { state: 'hidden', ts: Date.now() }); } catch (_) {}
 }
 
 // 切换窗口显示/隐藏
@@ -1037,6 +1258,7 @@ ipcMain.on('set-sidebar-width', (event, px) => {
     const next = Math.max(0, Math.min(600, Math.floor(px || 0))); // 0~600 合理范围
     if (next !== sidebarWidthPx) {
       sidebarWidthPx = next;
+      try { console.log('[SidebarWidth]', sidebarWidthPx, 'px'); } catch (_) {}
       updateBrowserViewBounds();
     }
   } catch (_) {}
@@ -1058,15 +1280,27 @@ ipcMain.on('set-split-ratio', (event, ratio) => {
 
 // 覆盖模式 IPC
 ipcMain.on('overlay-enter', () => {
+  const prev = overlayDepth;
   overlayDepth = Math.max(0, overlayDepth + 1);
   if (overlayDepth === 1) {
+    console.log('[Overlay] enter → depth=1 (detach BrowserView)');
     detachBrowserView();
+    try { mainWindow?.webContents.send('overlay-state', { action: 'enter', depth: overlayDepth, ts: Date.now() }); } catch (_) {}
+  } else {
+    console.log('[Overlay] enter → depth=' + overlayDepth + ' (no-op)');
+    try { mainWindow?.webContents.send('overlay-state', { action: 'enter', depth: overlayDepth, ts: Date.now() }); } catch (_) {}
   }
 });
 ipcMain.on('overlay-exit', () => {
+  const prev = overlayDepth;
   overlayDepth = Math.max(0, overlayDepth - 1);
   if (overlayDepth === 0) {
+    console.log('[Overlay] exit → depth=0 (attach BrowserView)');
     attachBrowserView();
+    try { mainWindow?.webContents.send('overlay-state', { action: 'exit', depth: overlayDepth, ts: Date.now() }); } catch (_) {}
+  } else {
+    console.log('[Overlay] exit → depth=' + overlayDepth + ' (no-op)');
+    try { mainWindow?.webContents.send('overlay-state', { action: 'exit', depth: overlayDepth, ts: Date.now() }); } catch (_) {}
   }
 });
 
@@ -1177,6 +1411,93 @@ async function insertImageIntoCurrentView(dataUrl) {
   }
 }
 
+// 主动将 BrowserView 内的提示输入框设为焦点
+async function focusPromptInCurrentView() {
+  if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
+  try { currentBrowserView.webContents.focus(); } catch (_) {}
+  try {
+    // 进入短暂布局冻结，避免聚焦/样式调整引发的抖动
+    try { mainWindow?.webContents.send('layout-state', { action:'freeze-enter', ts: Date.now() }); } catch (_) {}
+    layoutFreezeDepth = Math.max(0, layoutFreezeDepth + 1);
+    const result = await currentBrowserView.webContents.executeJavaScript(`
+      (function() {
+        try {
+          // 稳定全屏背景页在滚动条出现/隐藏时的布局抖动
+          try {
+            const root = document.documentElement;
+            const body = document.body;
+            if (root && root.style) {
+              root.style.scrollbarGutter = 'stable both-edges';
+              // overlay 在 macOS 上不占宽；若不支持则回退为 scroll
+              try { root.style.overflowY = 'overlay'; } catch (_) { root.style.overflowY = 'scroll'; }
+            }
+            if (body && body.style) {
+              body.style.scrollbarGutter = 'stable both-edges';
+            }
+          } catch (_) {}
+          function findPromptElement() {
+            const selectors = [
+              'textarea',
+              'div[contenteditable="true"]',
+              '[role="textbox"]',
+              '[aria-label*="prompt" i]',
+              '[data-testid*="prompt" i]',
+              '[data-testid*="textbox" i]'
+            ];
+            for (const selector of selectors) {
+              const els = Array.from(document.querySelectorAll(selector));
+              const visible = els.filter(el => {
+                const s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+              });
+              if (visible.length) {
+                visible.sort((a,b)=>b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+                return visible[0];
+              }
+            }
+            return null;
+          }
+          function placeCaretAtEnd(el) {
+            try {
+              if (el.isContentEditable) {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                return;
+              }
+              if (typeof el.selectionStart === 'number') {
+                const len = (el.value||'').length;
+                el.selectionStart = el.selectionEnd = len;
+              }
+            } catch (_) {}
+          }
+          const el = findPromptElement();
+          if (!el) return { ok:false, error:'no-input' };
+          try { el.focus(); } catch(_){}
+          placeCaretAtEnd(el);
+          return { ok:true };
+        } catch (e) {
+          return { ok:false, error: String(e && e.message || e) };
+        }
+      })();
+    `);
+    // 退出冻结（稍微延迟确保样式生效）
+    setTimeout(() => {
+      layoutFreezeDepth = Math.max(0, layoutFreezeDepth - 1);
+      if (layoutFreezeDepth === 0 && hasPendingLayoutUpdate) {
+        hasPendingLayoutUpdate = false; updateBrowserViewBounds();
+      }
+      try { mainWindow?.webContents.send('layout-state', { action:'freeze-exit', ts: Date.now() }); } catch (_) {}
+    }, 200);
+    return result && result.ok ? result : { ok:false, error: (result && result.error)||'unknown' };
+  } catch (e) {
+    return { ok:false, error:String(e) };
+  }
+}
+
 function simulateSystemCopy() {
   return new Promise((resolve) => {
     try {
@@ -1209,391 +1530,7 @@ function simulateSystemCopy() {
   });
 }
 
-async function getSelectedTextAuto() {
-  try {
-    console.log('[getSelectedText] 开始获取选中文字...');
-    
-    // 方法1: 尝试从 BrowserView 中直接获取选中的文字（最可靠）
-    if (currentBrowserView && currentBrowserView.webContents) {
-      try {
-        console.log('[getSelectedText] 尝试从 BrowserView 获取...');
-        
-        // 先让 BrowserView 获得焦点，确保能获取到选中文字
-        currentBrowserView.webContents.focus();
-        await new Promise(r => setTimeout(r, 50)); // 减少等待时间，快速获取
-        
-        const selectedText = await currentBrowserView.webContents.executeJavaScript(`
-          (function() {
-            try {
-              console.log('[BrowserView] 开始获取选中文字...');
-              
-              // 尝试多种方式获取选中文字
-              let text = null;
-              
-              // 方法1: window.getSelection() - 最常用
-              try {
-                const sel = window.getSelection();
-                console.log('[BrowserView] window.getSelection:', sel ? '存在' : '不存在', 'rangeCount:', sel ? sel.rangeCount : 0);
-                if (sel && sel.rangeCount > 0) {
-                  text = sel.toString().trim();
-                  console.log('[BrowserView] 从 window.getSelection 获取:', text ? text.length + '字符' : '空');
-                  if (text) {
-                    return text;
-                  }
-                }
-              } catch(e1) {
-                console.log('[BrowserView] window.getSelection 失败:', e1);
-              }
-              
-              // 方法2: document.getSelection() - 备用
-              try {
-                const docSel = document.getSelection();
-                console.log('[BrowserView] document.getSelection:', docSel ? '存在' : '不存在', 'rangeCount:', docSel ? docSel.rangeCount : 0);
-                if (docSel && docSel.rangeCount > 0) {
-                  text = docSel.toString().trim();
-                  console.log('[BrowserView] 从 document.getSelection 获取:', text ? text.length + '字符' : '空');
-                  if (text) {
-                    return text;
-                  }
-                }
-              } catch(e2) {
-                console.log('[BrowserView] document.getSelection 失败:', e2);
-              }
-              
-              // 方法3: 检查是否有选中的文本节点（更底层的方法）
-              try {
-                const sel = window.getSelection();
-                if (sel && sel.rangeCount > 0) {
-                  const range = sel.getRangeAt(0);
-                  text = range.toString().trim();
-                  console.log('[BrowserView] 从 range 获取:', text ? text.length + '字符' : '空');
-                  if (text) {
-                    return text;
-                  }
-                }
-              } catch(e3) {
-                console.log('[BrowserView] range 获取失败:', e3);
-              }
-              
-              console.log('[BrowserView] ❌ 未找到选中文字');
-              return null;
-            } catch(e) {
-              console.error('[BrowserView] 获取选中文字异常:', e);
-              return null;
-            }
-          })();
-        `);
-        
-        if (selectedText && selectedText.trim()) {
-          console.log('✅ 从 BrowserView 获取选中文字成功:', selectedText.length, '字符');
-          console.log('   预览:', selectedText.substring(0, 50));
-          return selectedText;
-        } else {
-          console.log('⚠️ BrowserView 中未检测到选中文字');
-        }
-      } catch (e) {
-        console.log('❌ 从 BrowserView 获取选中文字失败:', e.message);
-      }
-    } else {
-      console.log('⚠️ BrowserView 不存在，跳过直接获取');
-    }
-    
-    // 方法2: 使用剪贴板方法（适用于在其他应用中选中的文字）
-    console.log('[getSelectedText] 尝试使用剪贴板方法获取选中文字...');
-    
-    // 先读取当前剪贴板内容
-    let oldClipboard = '';
-    try { 
-      oldClipboard = clipboard.readText(); 
-      console.log('   当前剪贴板内容:', oldClipboard ? oldClipboard.substring(0, 50) + '...' : '(空)');
-    } catch (_) {
-      console.log('   无法读取当前剪贴板');
-    }
-    
-    // 确保 BrowserView 有焦点，这样 Cmd+C 才能正确复制选中内容
-    if (currentBrowserView && currentBrowserView.webContents) {
-      currentBrowserView.webContents.focus();
-      await new Promise(r => setTimeout(r, 100)); // 等待焦点稳定
-    }
-    
-    // 尝试模拟一次系统复制
-    console.log('   正在模拟 Cmd+C...');
-    await simulateSystemCopy();
-    
-    // 增加等待时间到 600ms，给系统足够时间完成复制
-    await new Promise(r => setTimeout(r, 600));
-    
-    // 读取剪贴板
-    let text = '';
-    try { 
-      text = clipboard.readText(); 
-      console.log('   复制后剪贴板内容:', text ? text.substring(0, 50) + '...' : '(空)');
-    } catch (_) {
-      console.log('   无法读取复制后的剪贴板');
-    }
-    
-    // 如果获取到新内容，返回
-    if (text && text.trim() && text !== oldClipboard) {
-      console.log('✅ 从剪贴板获取选中文字成功:', text.length, '字符');
-      console.log('   预览:', text.substring(0, 50));
-      return text;
-    }
-    
-    // 如果剪贴板没有变化，但有内容，可能是：
-    // 1. 用户已经手动复制过了
-    // 2. 模拟复制失败（需要权限）
-    if (text && text.trim()) {
-      if (text === oldClipboard) {
-        console.log('⚠️ 剪贴板内容未变化，可能原因：');
-        console.log('   1. 模拟复制失败（需要在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用）');
-        console.log('   2. 没有选中文字');
-        console.log('   3. 使用剪贴板现有内容:', text.length, '字符');
-      } else {
-        console.log('⚠️ 使用剪贴板现有内容:', text.length, '字符');
-      }
-      console.log('   预览:', text.substring(0, 50));
-      return text;
-    }
-    
-    console.log('❌ 未检测到选中文字');
-    return '';
-  } catch (e) {
-    console.error('read clipboard text error:', e);
-    return '';
-  }
-}
 
-async function insertTextIntoCurrentView(text) {
-  if (!text) {
-    console.error('[insertText] 文字为空');
-    return { ok:false, error:'empty' };
-  }
-  if (!currentBrowserView || !currentBrowserView.webContents) {
-    console.error('[insertText] 没有 BrowserView');
-    return { ok:false, error:'no-view' };
-  }
-  
-  console.log('[insertText] 开始插入文字，长度:', text.length);
-  console.log('[insertText] 文字预览:', text.substring(0, 100));
-  
-  try {
-    // 尝试通过 JavaScript 注入
-    const ok = await currentBrowserView.webContents.executeJavaScript(`
-      (function(){
-        try {
-          const text = ${JSON.stringify(text)};
-          console.log('[BrowserView] 开始查找输入框...');
-          
-          function findPromptElement(){
-            // 扩展的选择器列表，包括更多可能的输入框类型
-            const selectors=[
-              'textarea',
-              'div[contenteditable="true"]',
-              '[contenteditable="true"]',
-              '[role="textbox"]',
-              '[aria-label*="prompt" i]',
-              '[aria-label*="message" i]',
-              '[aria-label*="输入" i]',
-              '[data-testid*="prompt" i]',
-              '[data-testid*="textbox" i]',
-              '[data-testid*="composer" i]',
-              '[id*="prompt" i]',
-              '[id*="input" i]',
-              '[id*="composer" i]',
-              '[class*="composer" i]',
-              '[class*="input" i]',
-              '[class*="prompt" i]'
-            ];
-            
-            for (const s of selectors){
-              try {
-                const els=Array.from(document.querySelectorAll(s));
-                const visible=els.filter(el=>{
-                  const cs=getComputedStyle(el);
-                  const rect = el.getBoundingClientRect();
-                  return cs.display!=='none' && 
-                         cs.visibility!=='hidden' && 
-                         el.offsetParent!==null &&
-                         rect.width > 50 && 
-                         rect.height > 20;
-                });
-                if (visible.length){
-                  console.log('[BrowserView] 找到输入框:', s, '数量:', visible.length);
-                  // 优先选择最下方的（通常是当前活动的输入框）
-                  visible.sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top);
-                  const selected = visible[0];
-                  console.log('[BrowserView] 选择输入框:', selected.tagName, selected.id, selected.className);
-                  return selected;
-                }
-              } catch(e) {
-                console.log('[BrowserView] 选择器查询失败:', s, e);
-              }
-            }
-            console.log('[BrowserView] 未找到输入框');
-            return null;
-          }
-          
-          function setEl(el, t){
-            const tag=(el.tagName||'').toLowerCase();
-            console.log('[BrowserView] 尝试设置元素:', tag);
-            
-            // 保存当前滚动位置，防止页面跳转
-            const scrollX = window.scrollX || window.pageXOffset || 0;
-            const scrollY = window.scrollY || window.pageYOffset || 0;
-            const elScrollTop = el.scrollTop || 0;
-            
-            if (tag==='textarea' || (el.value!==undefined)){
-              // 使用 preventScroll 选项（如果支持）
-              try {
-                el.focus({ preventScroll: true });
-              } catch(_) {
-                el.focus();
-              }
-              const cur=String(el.value||'');
-              const nv=cur? (cur+'\\n'+t): t;
-              el.value=nv; 
-              try{ el.selectionStart=el.selectionEnd=nv.length; }catch(_){}
-              el.scrollTop=el.scrollHeight;
-              el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
-              el.dispatchEvent(new Event('change',{bubbles:true}));
-              
-              // 恢复滚动位置
-              window.scrollTo(scrollX, scrollY);
-              el.scrollTop = elScrollTop;
-              
-              console.log('[BrowserView] textarea 设置成功');
-              return true;
-            }
-            if (el.isContentEditable || el.getAttribute('contenteditable')==='true'){
-              // 方法1: 不调用 focus，直接操作（避免页面跳转）
-              try {
-                const sel = window.getSelection();
-                const range = document.createRange();
-                
-                // 移动到元素末尾
-                range.selectNodeContents(el);
-                range.collapse(false);
-                sel.removeAllRanges();
-                sel.addRange(range);
-                
-                // 如果有现有内容，先添加换行
-                if (el.textContent && el.textContent.trim()) {
-                  const textNode = document.createTextNode('\\n' + t);
-                  range.insertNode(textNode);
-                  range.setStartAfter(textNode);
-                  range.collapse(false);
-                  sel.removeAllRanges();
-                  sel.addRange(range);
-                } else {
-                  const textNode = document.createTextNode(t);
-                  range.insertNode(textNode);
-                  range.setStartAfter(textNode);
-                  range.collapse(false);
-                  sel.removeAllRanges();
-                  sel.addRange(range);
-                }
-                
-                // 触发事件
-                el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,data:t}));
-                el.dispatchEvent(new Event('change',{bubbles:true}));
-                
-                // 恢复滚动位置
-                window.scrollTo(scrollX, scrollY);
-                
-                console.log('[BrowserView] contenteditable 设置成功 (方法1)');
-                return true;
-              } catch(e1) {
-                console.log('[BrowserView] 方法1失败，尝试方法2:', e1);
-              }
-              
-              // 方法2: 使用 preventScroll 的 focus + execCommand
-              try {
-                try {
-                  el.focus({ preventScroll: true });
-                } catch(_) {
-                  el.focus();
-                }
-                const sel=window.getSelection(); const range=document.createRange();
-                range.selectNodeContents(el); range.collapse(false); sel.removeAllRanges(); sel.addRange(range);
-                if (el.textContent && el.textContent.trim()) document.execCommand('insertText',false,'\\n');
-                document.execCommand('insertText',false,t);
-                el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
-                
-                // 恢复滚动位置
-                window.scrollTo(scrollX, scrollY);
-                
-                console.log('[BrowserView] contenteditable 设置成功 (方法2)');
-                return true;
-              } catch(e2) {
-                console.log('[BrowserView] 方法2失败，尝试方法3:', e2);
-              }
-              
-              // 方法3: 直接设置 innerText/textContent（不调用 focus）
-              try {
-                const cur = el.textContent || el.innerText || '';
-                el.textContent = cur ? (cur + '\\n' + t) : t;
-                el.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true}));
-                el.dispatchEvent(new Event('change',{bubbles:true}));
-                
-                // 恢复滚动位置
-                window.scrollTo(scrollX, scrollY);
-                
-                console.log('[BrowserView] contenteditable 设置成功 (方法3)');
-                return true;
-              } catch(e3) {
-                console.log('[BrowserView] 方法3失败:', e3);
-              }
-              
-              return false;
-            }
-            console.log('[BrowserView] 无法识别的元素类型');
-            return false;
-          }
-          
-          const el=findPromptElement();
-          if (!el) {
-            console.log('[BrowserView] 未找到输入框元素');
-            return false;
-          }
-          return setEl(el,text);
-        } catch(e){ 
-          console.error('[BrowserView] 插入失败:', e);
-          return false; 
-        }
-      })();
-    `);
-    
-    if (ok) {
-      console.log('[insertText] ✅ JavaScript 注入成功');
-      return { ok: true, method: 'javascript' };
-    }
-    
-    // 如果 JavaScript 注入失败，尝试系统级粘贴
-    console.log('[insertText] JavaScript 注入失败，尝试系统粘贴...');
-    const oldClipboard = clipboard.readText();
-    clipboard.writeText(text);
-    
-    try {
-      currentBrowserView.webContents.focus();
-      await new Promise(r => setTimeout(r, 100));
-      currentBrowserView.webContents.paste();
-      console.log('[insertText] ✅ 系统粘贴成功');
-      
-      // 恢复原剪贴板内容
-      setTimeout(() => {
-        try { clipboard.writeText(oldClipboard); } catch(_){}
-      }, 500);
-      
-      return { ok: true, method: 'system-paste' };
-    } catch (e) {
-      console.error('[insertText] 系统粘贴失败:', e);
-      return { ok: false, error: '系统粘贴失败' };
-    }
-  } catch (e) {
-    console.error('[insertText] 异常:', e);
-    return { ok:false, error:String(e) };
-  }
-}
 
 // renderer 请求截屏
 ipcMain.on('capture-screenshot', async () => {
@@ -1608,32 +1545,12 @@ ipcMain.on('capture-screenshot', async () => {
   mainWindow.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
 });
 
-// renderer 请求读取选中文字
-ipcMain.on('get-selected-text', async () => {
-  console.log('收到 get-selected-text 请求');
-  const text = await getSelectedTextAuto();
-  
-  if (!text) {
-    const hint = process.platform === 'darwin' 
-      ? '未检测到选中文字。请确保:\n1. 已选中文字\n2. 在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用\n3. 或者先手动复制文字(Cmd+C)再按快捷键'
-      : '未检测到选中文字。请先选中文字，或手动复制(Ctrl+C)后再试';
-    mainWindow?.webContents.send('selected-text-error', hint);
-    return;
-  }
-  
-  console.log('准备插入文字，长度:', text.length);
-  mainWindow?.webContents.send('selected-text', { text });
-  
-  await new Promise(r => setTimeout(r, 100));
-  const res = await insertTextIntoCurrentView(text);
-  
-  if (!res.ok) {
-    console.warn('文字插入失败:', res.error);
-    mainWindow?.webContents.send('selected-text-error', '文字插入失败，请手动粘贴到输入框');
-  } else {
-    console.log('文字插入成功');
-  }
+// 聚焦当前 BrowserView 的提示输入框
+ipcMain.on('focus-prompt', async () => {
+  const res = await focusPromptInCurrentView();
+  try { mainWindow?.webContents.send('focus-prompt-result', res); } catch (_) {}
 });
+
 
 // 置顶切换
 // 参考 RI 项目实现：https://github.com/kexin94yyds/RI.git
@@ -1695,6 +1612,67 @@ ipcMain.on('get-always-on-top', (event) => {
   event.reply('always-on-top-status', mainWindow.isAlwaysOnTop());
 });
 
+// 🔍 关键修复：锁定/解锁窗口位置（用于插入文本时防止窗口跳动）
+ipcMain.on('lock-window-position', (event, shouldLock) => {
+  const wasLocked = windowPositionLock;
+  windowPositionLock = shouldLock === true;
+  console.log('[WINDOW_POSITION_LOCK]', windowPositionLock ? '锁定' : '解锁', '窗口位置');
+  
+  // 如果锁定，保存当前位置并确保不会改变
+  if (windowPositionLock && mainWindow && isShowing) {
+    const currentPos = mainWindow.getPosition();
+    if (!lastWindowPosition) {
+      lastWindowPosition = { x: currentPos[0], y: currentPos[1] };
+    } else {
+      // 如果已经有保存的位置，使用它（不要用当前位置覆盖）
+      // 这样可以防止在锁定期间位置被意外改变
+    }
+    console.log('[WINDOW_POSITION_LOCK] 锁定时的位置:', lastWindowPosition);
+    
+    // 🔍 关键修复：立即验证并恢复位置，防止在锁定瞬间位置被改变
+    const verifyPos = mainWindow.getPosition();
+    if (verifyPos[0] !== lastWindowPosition.x || verifyPos[1] !== lastWindowPosition.y) {
+      console.warn('[WINDOW_POSITION_LOCK] ⚠️ 锁定瞬间位置不匹配，强制恢复:', {
+        expected: lastWindowPosition,
+        actual: { x: verifyPos[0], y: verifyPos[1] }
+      });
+      mainWindow.setPosition(lastWindowPosition.x, lastWindowPosition.y);
+    }
+    
+    // 🔍 关键修复：在锁定期间，定期检查并恢复位置（防止系统自动调整）
+    if (!wasLocked) {
+      // 只在第一次锁定时启动监控
+      const positionGuard = setInterval(() => {
+        if (!windowPositionLock || !mainWindow || !isShowing) {
+          clearInterval(positionGuard);
+          return;
+        }
+        if (!lastWindowPosition) return;
+        
+        const currentPos = mainWindow.getPosition();
+        if (currentPos[0] !== lastWindowPosition.x || currentPos[1] !== lastWindowPosition.y) {
+          console.warn('[WINDOW_POSITION_LOCK] ⚠️ 检测到位置变化，强制恢复:', {
+            expected: lastWindowPosition,
+            actual: { x: currentPos[0], y: currentPos[1] }
+          });
+          mainWindow.setPosition(lastWindowPosition.x, lastWindowPosition.y);
+        }
+      }, 50); // 每50ms检查一次
+      
+      // 存储 interval ID，以便在解锁时清理（如果需要）
+      mainWindow.__positionGuardInterval = positionGuard;
+    }
+  } else if (!windowPositionLock && wasLocked) {
+    // 解锁时，清理监控
+    if (mainWindow && mainWindow.__positionGuardInterval) {
+      clearInterval(mainWindow.__positionGuardInterval);
+      mainWindow.__positionGuardInterval = null;
+    }
+  }
+  
+  event.reply('window-position-lock-status', windowPositionLock);
+});
+
 // 应用准备就绪
 app.whenReady().then(() => {
   createWindow();
@@ -1735,18 +1713,9 @@ app.whenReady().then(() => {
   });
   console.log('应用已启动！按 Option+Space 或 Shift+Cmd/Ctrl+Space（或 F13）呼出侧边栏');
   console.log('');
-  console.log('📝 文字注入功能已启用:');
-  console.log('   - 快捷键: Command+Shift+Y (Mac) 或 Control+Shift+Y (Windows)');
-  console.log('   - 用法: 选中文字后按快捷键，文字会自动注入到输入框');
-  console.log('');
-  console.log('⚠️  macOS 权限提示:');
-  console.log('   如果文字无法自动复制，请在"系统设置 → 隐私与安全性 → 辅助功能"中');
-  console.log('   添加 AI Sidebar，允许其控制电脑。这样才能自动复制选中的文字。');
-  console.log('');
   
-  // ============== 截屏/文字 全局快捷键 ==============
+  // ============== 截屏全局快捷键 ==============
   const screenshotKey = process.platform === 'darwin' ? 'Command+Shift+K' : 'Control+Shift+K';
-  const textKey = process.platform === 'darwin' ? 'Command+Shift+Y' : 'Control+Shift+Y';
   const gotShot = globalShortcut.register(screenshotKey, async () => {
     console.log('截屏快捷键触发:', screenshotKey);
     // 无闪烁截屏：启用内容保护，避免把本窗口捕获进去
@@ -1761,44 +1730,6 @@ app.whenReady().then(() => {
     mainWindow?.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
   });
   if (!gotShot) console.error('截图快捷键注册失败:', screenshotKey);
-
-  const gotText = globalShortcut.register(textKey, async () => {
-    console.log('文字选择快捷键触发:', textKey);
-    
-    // 先显示窗口（如果未显示）
-    if (!isShowing) {
-      showWindow();
-      // 等待窗口显示完成
-      await new Promise(r => setTimeout(r, 200));
-    }
-    
-    // 尝试在当前聚焦应用执行复制，再读剪贴板
-    const text = await getSelectedTextAuto();
-    
-    if (!text) {
-      const hint = process.platform === 'darwin' 
-        ? '未检测到选中文字。请确保:\n1. 已选中文字\n2. 在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用\n3. 或者先手动复制文字(Cmd+C)再按快捷键'
-        : '未检测到选中文字。请先选中文字，或手动复制(Ctrl+C)后再按快捷键';
-      mainWindow?.webContents.send('selected-text-error', hint);
-      console.warn('未获取到文字');
-      return;
-    }
-    
-    console.log('准备插入文字到输入框，长度:', text.length);
-    mainWindow?.webContents.send('selected-text', { text });
-    
-    // 等待一下确保窗口和 BrowserView 都准备好
-    await new Promise(r => setTimeout(r, 100));
-    
-    const res = await insertTextIntoCurrentView(text);
-    if (!res.ok) {
-      console.warn('文字插入失败:', res.error);
-      mainWindow?.webContents.send('selected-text-error', '文字插入失败，请手动粘贴到输入框');
-    } else {
-      console.log('文字插入成功');
-    }
-  });
-  if (!gotText) console.error('文字选择快捷键注册失败:', textKey);
   
   // 首次启动时显示窗口并加载默认 provider
   setTimeout(() => {

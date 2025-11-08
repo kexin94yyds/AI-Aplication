@@ -465,6 +465,11 @@ html {
   font-size: 13px;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* 减少因合成层切换导致的闪烁 */
+  will-change: opacity, transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout paint;
 }
 /* Backdrop to catch outside clicks, placed under history panel */
 .history-backdrop {
@@ -472,6 +477,9 @@ html {
   inset: 0;
   background: transparent; /* invisible click-catcher */
   z-index: 2147483645;
+  /* 稳定合成层 */
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* Favorites dropdown panel (shares style with history) */
@@ -493,8 +501,12 @@ html {
   font-size: 13px;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  will-change: opacity, transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout paint;
 }
-.favorites-backdrop { position: fixed; inset: 0; background: transparent; z-index: 2147483645; }
+.favorites-backdrop { position: fixed; inset: 0; background: transparent; z-index: 2147483645; transform: translateZ(0); backface-visibility: hidden; }
 
 .favorites-panel .fp-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #eef2f7; font-weight: 600; }
 .favorites-panel .fp-actions button { margin-left: 8px; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid #e5e7eb; background: #fff; cursor: pointer; }
@@ -724,6 +736,7 @@ html {
 /* 左侧垂直导航栏样式 */
 #provider-tabs {
   width: 60px; /* 侧边栏宽度 */
+  box-sizing: border-box; /* 宽度稳定，包含内边距与边框 */
   height: 100vh;
   display: flex;
   flex-direction: column; /* 垂直排列 */
