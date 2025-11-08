@@ -788,8 +788,13 @@ function simulateSystemCopy() {
   return new Promise((resolve) => {
     try {
       if (process.platform === 'darwin') {
-        // 通过 AppleScript 发送 Cmd+C（需要“辅助功能”权限）
-        exec('osascript -e "tell application \"System Events\" to keystroke \"c\" using {command down}"', () => resolve());
+        // 通过 AppleScript 发送 Cmd+C（需要"辅助功能"权限）
+        exec('osascript -e "tell application \\"System Events\\" to keystroke \\"c\\" using {command down}"', (error) => {
+          if (error) {
+            console.error('模拟复制失败（可能需要辅助功能权限）:', error.message);
+          }
+          resolve();
+        });
       } else if (process.platform === 'win32') {
         // PowerShell 发送 Ctrl+C
         const cmd = 'powershell -command "$wshell = New-Object -ComObject wscript.shell; $wshell.SendKeys(\'^c\')"';
@@ -804,14 +809,32 @@ function simulateSystemCopy() {
 
 async function getSelectedTextAuto() {
   try {
-    let text = '';
-    try { text = clipboard.readText(); } catch (_) {}
-    if (text && text.trim()) return text;
+    // 先清空剪贴板，确保获取的是最新内容
+    const oldClipboard = clipboard.readText();
+    
     // 尝试模拟一次系统复制
     await simulateSystemCopy();
-    await new Promise(r => setTimeout(r, 140));
+    
+    // 增加等待时间到 300ms，给系统足够时间完成复制
+    await new Promise(r => setTimeout(r, 300));
+    
+    // 读取剪贴板
+    let text = '';
     try { text = clipboard.readText(); } catch (_) {}
-    return (text && text.trim()) ? text : '';
+    
+    // 如果获取到新内容，返回
+    if (text && text.trim() && text !== oldClipboard) {
+      console.log('成功获取选中文字:', text.length, '字符');
+      return text;
+    }
+    
+    // 如果剪贴板没有变化，但有内容，也返回（用户可能已经复制过了）
+    if (text && text.trim()) {
+      console.log('使用剪贴板现有内容:', text.length, '字符');
+      return text;
+    }
+    
+    return '';
   } catch (e) {
     console.error('read clipboard text error:', e);
     return '';
@@ -885,11 +908,29 @@ ipcMain.on('capture-screenshot', async () => {
 
 // renderer 请求读取选中文字
 ipcMain.on('get-selected-text', async () => {
+  console.log('收到 get-selected-text 请求');
   const text = await getSelectedTextAuto();
-  if (!text) { mainWindow?.webContents.send('selected-text-error', '未检测到剪贴板文字'); return; }
+  
+  if (!text) {
+    const hint = process.platform === 'darwin' 
+      ? '未检测到选中文字。请确保:\n1. 已选中文字\n2. 在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用\n3. 或者先手动复制文字(Cmd+C)再按快捷键'
+      : '未检测到选中文字。请先选中文字，或手动复制(Ctrl+C)后再试';
+    mainWindow?.webContents.send('selected-text-error', hint);
+    return;
+  }
+  
+  console.log('准备插入文字，长度:', text.length);
   mainWindow?.webContents.send('selected-text', { text });
+  
+  await new Promise(r => setTimeout(r, 100));
   const res = await insertTextIntoCurrentView(text);
-  if (!res.ok) console.warn('insert text failed:', res.error);
+  
+  if (!res.ok) {
+    console.warn('文字插入失败:', res.error);
+    mainWindow?.webContents.send('selected-text-error', '文字插入失败，请手动粘贴到输入框');
+  } else {
+    console.log('文字插入成功');
+  }
 });
 
 // 置顶切换
@@ -1012,13 +1053,39 @@ app.whenReady().then(() => {
 
   const gotText = globalShortcut.register(textKey, async () => {
     console.log('文字选择快捷键触发:', textKey);
-    // 先尝试在当前聚焦应用执行复制，再读剪贴板
+    
+    // 先显示窗口（如果未显示）
+    if (!isShowing) {
+      showWindow();
+      // 等待窗口显示完成
+      await new Promise(r => setTimeout(r, 200));
+    }
+    
+    // 尝试在当前聚焦应用执行复制，再读剪贴板
     const text = await getSelectedTextAuto();
-    if (!text) { mainWindow?.webContents.send('selected-text-error', '未检测到剪贴板文字'); return; }
-    if (!isShowing) showWindow();
+    
+    if (!text) {
+      const hint = process.platform === 'darwin' 
+        ? '未检测到选中文字。请确保:\n1. 已选中文字\n2. 在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用\n3. 或者先手动复制文字(Cmd+C)再按快捷键'
+        : '未检测到选中文字。请先选中文字，或手动复制(Ctrl+C)后再按快捷键';
+      mainWindow?.webContents.send('selected-text-error', hint);
+      console.warn('未获取到文字');
+      return;
+    }
+    
+    console.log('准备插入文字到输入框，长度:', text.length);
     mainWindow?.webContents.send('selected-text', { text });
+    
+    // 等待一下确保窗口和 BrowserView 都准备好
+    await new Promise(r => setTimeout(r, 100));
+    
     const res = await insertTextIntoCurrentView(text);
-    if (!res.ok) console.warn('insert text failed:', res.error);
+    if (!res.ok) {
+      console.warn('文字插入失败:', res.error);
+      mainWindow?.webContents.send('selected-text-error', '文字插入失败，请手动粘贴到输入框');
+    } else {
+      console.log('文字插入成功');
+    }
   });
   if (!gotText) console.error('文字选择快捷键注册失败:', textKey);
   

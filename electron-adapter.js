@@ -204,10 +204,8 @@ if (window.electronAPI) {
   // 监听选中文字错误
   window.electronAPI.onSelectedTextError((error) => {
     console.error('[Electron Adapter] 获取文字错误:', error);
-    const hint = (navigator.platform.includes('Mac') && /未检测到剪贴板文字/.test(String(error)))
-      ? '未检测到剪贴板文字。若未先复制，我已尝试自动复制；如仍失败，请在 系统设置 → 隐私与安全性 → 辅助功能 中允许本应用。'
-      : String(error || '未检测到剪贴板文字');
-    showToast(hint, 'warn');
+    const errorMsg = String(error || '未检测到选中文字');
+    showToast(errorMsg, 'warn');
   });
   
   // 监听自动粘贴结果
@@ -222,5 +220,6 @@ if (window.electronAPI) {
   
   console.log('截屏和文字选择功能已初始化！');
   console.log('- 按 Cmd+Shift+K (Mac) 或 Ctrl+Shift+K (Windows) 截屏');
-  console.log('- 先复制文字（Cmd/Ctrl+C），然后按 Cmd+Shift+Y (Mac) 或 Ctrl+Shift+Y (Windows) 发送文字');
+  console.log('- 选中任意文字后，按 Cmd+Shift+Y (Mac) 或 Ctrl+Shift+Y (Windows) 自动复制并注入到输入框');
+  console.log('- 注意：macOS 需要在"系统设置 → 隐私与安全性 → 辅助功能"中允许本应用，才能自动复制选中文字');
 }
