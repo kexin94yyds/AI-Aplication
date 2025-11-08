@@ -1460,6 +1460,20 @@ const initializeBar = async () => {
   // 渲染底部导航栏
   await renderProviderTabs(currentProviderKey);
 
+  // 监听窗口尺寸变化，持续把侧边栏实际宽度同步给主进程
+  try {
+    const reportSidebarWidth = () => {
+      try {
+        const el = document.getElementById('provider-tabs');
+        if (!el) return;
+        const w = Math.round((el.getBoundingClientRect && el.getBoundingClientRect().width) || 0);
+        if (window.electronAPI?.setSidebarWidth) window.electronAPI.setSidebarWidth(w);
+      } catch (_) {}
+    };
+    window.addEventListener('resize', reportSidebarWidth);
+    reportSidebarWidth();
+  } catch (_) {}
+
   // helper: request host permission for a provider URL and add DNR rule
   const ensureAccessFor = (url) => {
     let origin = null;
@@ -1566,6 +1580,18 @@ const initializeBar = async () => {
         }
       };
       
+      // 更新地址栏位置（使其位于右侧内容区域）
+      const updateAddressBarPosition = () => {
+        if (!addressBar || !splitDivider || splitDivider.style.display === 'none') return;
+        
+        try {
+          const dividerLeft = parseFloat(splitDivider.style.left) || 0;
+          // 地址栏从分隔线右侧开始，到窗口右边缘
+          addressBar.style.left = `${dividerLeft + 4}px`; // 分隔线宽度约4px
+          addressBar.style.right = '8px';
+        } catch (_) {}
+      };
+      
       // 显示/隐藏返回按钮和分屏指示器
       const showBackButton = () => {
         backBtn.style.display = 'inline-flex';
@@ -1585,12 +1611,18 @@ const initializeBar = async () => {
               if (window.electronAPI?.setSplitRatio) {
                 window.electronAPI.setSplitRatio(savedRatio);
               }
+              // 更新地址栏位置
+              updateAddressBarPosition();
             } catch (_) {}
           }, 50);
         }
         // 显示地址栏
         if (addressBar) {
           addressBar.style.display = 'block';
+          // 延迟更新位置，确保分隔线位置已设置
+          setTimeout(() => {
+            updateAddressBarPosition();
+          }, 100);
         }
       };
       const hideBackButton = () => {
@@ -1679,6 +1711,8 @@ const initializeBar = async () => {
             const availableWidth = window.innerWidth - currentSidebarWidth;
             const splitPoint = availableWidth * ratio;
             splitDivider.style.left = `${currentSidebarWidth + splitPoint}px`;
+            // 同时更新地址栏位置
+            updateAddressBarPosition();
           }
         };
         
@@ -1733,6 +1767,9 @@ const initializeBar = async () => {
           splitDivider.style.left = `${clampedLeft}px`;
           splitDivider.style.transition = 'none'; // 拖动时禁用过渡
           
+          // 更新地址栏位置
+          updateAddressBarPosition();
+          
           // 通知主进程更新分屏比例
           if (window.electronAPI?.setSplitRatio) {
             window.electronAPI.setSplitRatio(ratio);
@@ -1771,6 +1808,8 @@ const initializeBar = async () => {
               if (window.electronAPI?.setSplitRatio) {
                 window.electronAPI.setSplitRatio(savedRatio);
               }
+              // 更新地址栏位置
+              updateAddressBarPosition();
             } catch (_) {}
           }
         };
@@ -1794,6 +1833,19 @@ const initializeBar = async () => {
           observer.observe(providerTabs, {
             attributes: true,
             attributeFilter: ['class']
+          });
+        }
+        
+        // 监听分隔线位置变化，同步更新地址栏位置
+        if (splitDivider && addressBar) {
+          const dividerObserver = new MutationObserver(() => {
+            if (splitDivider.style.display !== 'none' && addressBar.style.display !== 'none') {
+              updateAddressBarPosition();
+            }
+          });
+          dividerObserver.observe(splitDivider, {
+            attributes: true,
+            attributeFilter: ['style']
           });
         }
         
@@ -2325,6 +2377,24 @@ const initializeBar = async () => {
       
       // Check Search
       if (isShortcutMatch(__buttonShortcuts.searchBtn)) {
+        e.preventDefault();
+        // 聚焦到地址栏
+        const addressInput = document.getElementById('addressInput');
+        const addressBar = document.getElementById('addressBar');
+        
+        if (addressBar && addressInput && addressBar.style.display !== 'none') {
+          addressInput.focus();
+          addressInput.select();
+        } else {
+          // 如果地址栏未显示，触发Search按钮点击事件
+          const btn = document.getElementById('searchBtn');
+          if (btn) btn.click();
+        }
+        return;
+      }
+      
+      // 保留原来的搜索功能作为备用
+      if (false && isShortcutMatch(__buttonShortcuts.searchBtn)) {
         e.preventDefault();
         const btn = document.getElementById('searchBtn');
         if (btn) btn.click();
@@ -2871,7 +2941,7 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     toggleSearch();
   });
 
-  // 工具栏搜索按钮
+  // 工具栏搜索按钮 - 改为聚焦地址栏
   if (searchBtn) {
     // 设置初始快捷键提示
     getButtonShortcuts().then(shortcuts => {
@@ -2881,11 +2951,39 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
       if (sc.shift) keys.push('Shift');
       if (sc.alt) keys.push('Alt');
       keys.push(sc.key.toUpperCase());
-      searchBtn.title = `Search in page (${keys.join('+')})`;
+      searchBtn.title = `输入链接 (${keys.join('+')})`;
     });
     
     searchBtn.addEventListener('click', () => {
-      toggleSearch();
+      // 聚焦到地址栏
+      const addressInput = document.getElementById('addressInput');
+      const addressBar = document.getElementById('addressBar');
+      
+      if (addressBar && addressInput) {
+        // 如果地址栏未显示，先显示它（需要先打开内嵌浏览器）
+        if (addressBar.style.display === 'none') {
+          // 如果没有打开内嵌浏览器，提示用户或打开一个默认页面
+          if (IS_ELECTRON && window.electronAPI) {
+            // 可以打开一个默认的搜索页面
+            const defaultUrl = 'https://www.google.com';
+            window.electronAPI.openEmbeddedBrowser(defaultUrl);
+            // 等待地址栏显示后聚焦
+            setTimeout(() => {
+              if (addressInput) {
+                addressInput.focus();
+                addressInput.select();
+              }
+            }, 300);
+          }
+        } else {
+          // 地址栏已显示，直接聚焦
+          addressInput.focus();
+          addressInput.select();
+        }
+      } else {
+        // 如果地址栏不存在，回退到原来的搜索功能
+        toggleSearch();
+      }
     });
   }
 

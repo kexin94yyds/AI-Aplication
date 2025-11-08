@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSplitRatio: (ratio) => {
     ipcRenderer.send('set-split-ratio', ratio);
   },
+  // 左侧导航栏宽度（用于让出 BrowserView 左边距）
+  setSidebarWidth: (px) => {
+    ipcRenderer.send('set-sidebar-width', px);
+  },
   
   // 获取当前 BrowserView 的 URL
   getCurrentUrl: () => {

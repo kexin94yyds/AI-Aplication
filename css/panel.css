@@ -119,16 +119,18 @@ html {
   transition: none;
 }
 
-/* 地址栏 - 在工具栏下方 */
+/* 地址栏 - 在工具栏下方，仅显示在右侧内容区域 */
 .address-bar {
   position: absolute;
   top: 56px; /* 工具栏下方，8px + 40px + 8px */
-  left: 68px; /* 为左侧侧边栏留出空间 */
-  right: 8px;
+  /* left 和 right 通过 JavaScript 动态设置，以适配分屏位置 */
   height: 36px;
-  z-index: 99; /* 在工具栏之下，但在内容之上 */
+  z-index: 1000; /* 提高层级，确保在网页内容之上 */
   -webkit-app-region: no-drag;
   pointer-events: auto;
+  /* 初始位置，会在显示时通过 JavaScript 更新 */
+  left: 50%;
+  right: 8px;
 }
 
 .address-bar-wrapper {

@@ -17,6 +17,8 @@ let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
 let splitRatio = 0.5; // 分屏比例（0-1，0.5 表示各占一半）
 // 分割线命中区域（与渲染进程中的 .split-divider 保持一致）
 const DIVIDER_GUTTER = 24; // px，左右各一半作为留白，便于拖动
+// 左侧 provider tabs 实际宽度（渲染层动态汇报，折叠时为 0）
+let sidebarWidthPx = 60;
 // 自定义全宽模式（非系统原生全屏）
 let isFullWidth = false;
 let restoreBounds = null; // 记录进入全宽之前的窗口尺寸
@@ -479,10 +481,16 @@ function updateBrowserViewBounds() {
 
   const bounds = mainWindow.getContentBounds();
   
-  // 左侧留出 60px 给导航栏
-  const sidebarWidth = 60;
+  // 左侧留出实际的导航栏宽度（折叠=0）
+  const sidebarWidth = Math.max(0, Math.floor(sidebarWidthPx || 0));
   // 顶部留出空间给工具栏/面板
   const topBarHeight = Math.max(0, Math.floor(topInset || 0));
+  
+  // 地址栏高度：工具栏下方 56px 开始，高度 36px，所以地址栏底部在 92px
+  // 为地址栏留出空间：工具栏(48px) + 间距(8px) + 地址栏(36px) = 92px
+  const addressBarHeight = 36;
+  const addressBarTop = 56; // 工具栏下方
+  const addressBarBottom = addressBarTop + addressBarHeight; // 92px
   
   const availableWidth = bounds.width - sidebarWidth;
   const availableHeight = bounds.height - topBarHeight;
@@ -502,10 +510,11 @@ function updateBrowserViewBounds() {
     
     // 左侧：AI 聊天视图（previousBrowserView）
     // 左侧：为中间分割线预留 halfG 宽度
+    const leftWidth = Math.max(minWidth, adjustedSplitPoint - halfG);
     previousBrowserView.setBounds({
       x: sidebarWidth,
       y: topBarHeight,
-      width: Math.max(minWidth, adjustedSplitPoint - halfG),
+      width: leftWidth,
       height: availableHeight
     });
     previousBrowserView.setAutoResize({
@@ -514,12 +523,15 @@ function updateBrowserViewBounds() {
     });
     
     // 右侧：内嵌浏览器视图
-    // 右侧：同理从左边缘让出 halfG 宽度
+    // 右侧：从地址栏下方开始，为地址栏留出空间
+    const rightWidth = Math.max(minWidth, availableWidth - adjustedSplitPoint - halfG);
+    const rightViewY = Math.max(topBarHeight, addressBarBottom); // 从地址栏下方开始
+    const rightViewHeight = availableHeight - (rightViewY - topBarHeight); // 减去地址栏占用的高度
     embeddedBrowserView.setBounds({
       x: sidebarWidth + adjustedSplitPoint + halfG,
-      y: topBarHeight,
-      width: Math.max(minWidth, availableWidth - adjustedSplitPoint - halfG),
-      height: availableHeight
+      y: rightViewY,
+      width: rightWidth,
+      height: rightViewHeight
     });
     embeddedBrowserView.setAutoResize({
       width: false,
@@ -529,15 +541,16 @@ function updateBrowserViewBounds() {
     console.log('[Split View] AI chat (left):', {
       x: sidebarWidth,
       y: topBarHeight,
-      width: adjustedSplitPoint,
+      width: leftWidth,
       height: availableHeight,
       ratio: splitRatio
     });
     console.log('[Split View] Embedded browser (right):', {
-      x: sidebarWidth + adjustedSplitPoint,
-      y: topBarHeight,
-      width: availableWidth - adjustedSplitPoint,
-      height: availableHeight
+      x: sidebarWidth + adjustedSplitPoint + halfG,
+      y: rightViewY,
+      width: rightWidth,
+      height: rightViewHeight,
+      addressBarSpace: addressBarBottom - topBarHeight
     });
   } else if (currentBrowserView) {
     // 正常全屏布局：只有 AI 聊天视图
@@ -957,6 +970,17 @@ ipcMain.on('set-top-inset', (event, px) => {
     const next = Math.max(0, Math.min(parseInt(px || 0, 10), maxAllowed));
     if (next !== topInset) {
       topInset = next;
+      updateBrowserViewBounds();
+    }
+  } catch (_) {}
+});
+
+// 设置左侧导航栏宽度（由渲染进程根据 DOM 实际宽度上报）
+ipcMain.on('set-sidebar-width', (event, px) => {
+  try {
+    const next = Math.max(0, Math.min(600, Math.floor(px || 0))); // 0~600 合理范围
+    if (next !== sidebarWidthPx) {
+      sidebarWidthPx = next;
       updateBrowserViewBounds();
     }
   } catch (_) {}
