@@ -398,6 +398,7 @@ function updateBrowserViewBounds() {
   // 顶部留出空间给工具栏/面板
   const topBarHeight = Math.max(0, Math.floor(topInset || 0));
   
+  // 设置 BrowserView 的边界
   currentBrowserView.setBounds({
     x: sidebarWidth,
     y: topBarHeight,
@@ -405,17 +406,11 @@ function updateBrowserViewBounds() {
     height: bounds.height - topBarHeight
   });
 
+  // 禁用自动调整，完全由手动控制
+  // 这样可以防止窗口大小变化时页面自动滚动到顶部
   currentBrowserView.setAutoResize({
-    width: true,
-    height: true,
-    vertical: {
-      top: false,
-      height: true
-    },
-    horizontal: {
-      left: false,
-      width: true
-    }
+    width: false,
+    height: false
   });
   
   console.log('Updated BrowserView bounds:', {
