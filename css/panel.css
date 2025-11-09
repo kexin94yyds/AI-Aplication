@@ -415,10 +415,12 @@ html {
 
 /* Back button - 返回按钮 */
 .toolbar button#backBtn {
-  flex: 0 0 auto;
+  /* 与其他功能按钮保持一致的占位与间隔 */
+  flex: 1;
+  min-width: 0; /* 允许等分时内容溢出省略 */
   padding: 0 14px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700; /* 更粗的字重，便于强调“Return” */
   /* 使用统一的按钮样式 */
   background: #ffffff;
   border: 1px solid #e5e7eb;

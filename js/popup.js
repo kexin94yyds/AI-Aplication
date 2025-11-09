@@ -1110,10 +1110,10 @@ const ensureFrame = async (container, key, provider) => {
   if (IS_ELECTRON) {
     dbg('ensureFrame (Electron BrowserView mode):', key);
     
-    // 通知主进程切换到这个 provider
+    // 通知主进程切换到这个 provider，但不要强制导航到基础 URL
+    // 这样可以复用已缓存的 BrowserView，避免在切换/隐藏时触发刷新
     if (window.electronAPI && window.electronAPI.switchProvider) {
-      const targetUrl = provider.baseUrl || provider.iframeUrl || '';
-      window.electronAPI.switchProvider({ key, url: targetUrl });
+      window.electronAPI.switchProvider({ key });
     }
     
     // 更新 Open in Tab 按钮
