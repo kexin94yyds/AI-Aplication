@@ -32,6 +32,16 @@ let lastShowAt = 0; // 记录最近一次显示时间，用于忽略刚显示时
 let isInsertingText = false; // 标记是否正在插入文本，防止窗口位置被意外修改
 let windowPositionLock = false; // 窗口位置锁定标志，防止在特定操作时位置被改变
 
+// 统一获取“当前可注入的 AI 视图”
+// - 非分屏：返回 currentBrowserView
+// - 分屏：返回 previousBrowserView（左侧 AI）
+function getActiveAiView() {
+  try {
+    if (isEmbeddedBrowserActive && previousBrowserView) return previousBrowserView;
+    return currentBrowserView;
+  } catch (_) { return currentBrowserView; }
+}
+
 // ============== 与插件数据同步（JSON 文件） ==============
 const DEFAULT_SYNC_DIR = '/Users/apple/AI-sidebar 更新/AI-Sidebar';
 let syncBaseDir = DEFAULT_SYNC_DIR;
@@ -1309,10 +1319,15 @@ ipcMain.on('open-embedded-browser-from-view', (event, url) => {
 });
 
 ipcMain.on('get-current-url', (event) => {
-  if (currentBrowserView) {
-    const url = currentBrowserView.webContents.getURL();
-    event.reply('current-url', url);
-  } else {
+  try {
+    const view = getActiveAiView();
+    if (view && view.webContents) {
+      const url = view.webContents.getURL();
+      event.reply('current-url', url);
+    } else {
+      event.reply('current-url', null);
+    }
+  } catch (_) {
     event.reply('current-url', null);
   }
 });
@@ -1432,10 +1447,11 @@ async function captureScreen() {
 }
 
 async function insertImageIntoCurrentView(dataUrl) {
-  if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
-  try { currentBrowserView.webContents.focus(); } catch (_) {}
+  const view = getActiveAiView();
+  if (!view || !view.webContents) return { ok:false, error:'no-view' };
+  try { view.webContents.focus(); } catch (_) {}
   try {
-    const result = await currentBrowserView.webContents.executeJavaScript(`
+    const result = await view.webContents.executeJavaScript(`
       (async function() {
         try {
           const dataUrl = ${JSON.stringify('')};
@@ -1515,7 +1531,7 @@ async function insertImageIntoCurrentView(dataUrl) {
     `);
     if (result && result.ok) return result;
     // 兜底用系统级粘贴
-    try { currentBrowserView.webContents.paste(); return { ok:true, method:'system-paste' }; } catch (e) { return { ok:false, error:String(e) }; }
+    try { view.webContents.paste(); return { ok:true, method:'system-paste' }; } catch (e) { return { ok:false, error:String(e) }; }
   } catch (e) {
     return { ok:false, error:String(e) };
   }
@@ -1523,10 +1539,11 @@ async function insertImageIntoCurrentView(dataUrl) {
 
 // 主动将 BrowserView 内的提示输入框设为焦点
 async function focusPromptInCurrentView() {
-  if (!currentBrowserView || !currentBrowserView.webContents) return { ok:false, error:'no-view' };
-  try { currentBrowserView.webContents.focus(); } catch (_) {}
+  const view = getActiveAiView();
+  if (!view || !view.webContents) return { ok:false, error:'no-view' };
+  try { view.webContents.focus(); } catch (_) {}
   try {
-    const result = await currentBrowserView.webContents.executeJavaScript(`
+    const result = await view.webContents.executeJavaScript(`
       (function() {
         try {
           function findPromptElement() {
@@ -1672,7 +1689,8 @@ async function getSelectedTextViaClipboard() {
 
 // 向 BrowserView 的输入框插入文字
 async function insertTextIntoCurrentView(text) {
-  if (!currentBrowserView || !currentBrowserView.webContents) {
+  const view = getActiveAiView();
+  if (!view || !view.webContents) {
     return { ok: false, error: 'no-view' };
   }
   
@@ -1682,12 +1700,12 @@ async function insertTextIntoCurrentView(text) {
   
   try {
     // 先聚焦到 BrowserView
-    currentBrowserView.webContents.focus();
+    view.webContents.focus();
     
     // 等待一小段时间确保焦点已切换
     await new Promise(resolve => setTimeout(resolve, 50));
     
-    const result = await currentBrowserView.webContents.executeJavaScript(`
+    const result = await view.webContents.executeJavaScript(`
       (function() {
         try {
           function findPromptElement() {
@@ -1998,10 +2016,10 @@ app.whenReady().then(() => {
       
       console.log('获取到选中的文字:', selectedText.substring(0, 50) + '...');
       
-      // 确保有当前的 BrowserView
-      if (!currentBrowserView) {
-        // 如果没有，切换到默认的 provider
-        switchToProvider('chatgpt');
+      // 确保有可注入的 AI 视图（分屏时为左侧 AI）
+      if (!getActiveAiView()) {
+        // 如果没有，切回当前记录的 provider 或默认 provider
+        switchToProvider(currentProviderKey || 'chatgpt');
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
