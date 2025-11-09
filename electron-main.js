@@ -197,27 +197,7 @@ function startSyncHttpServer() {
 // 仅刷新当前活动区域，不刷新整个窗口或重置分割线
 function reloadActivePane(ignoreCache = false) {
   try {
-    // 首选最近聚焦的 BrowserView
-    let target = lastFocusedBrowserView;
-    // 如果没有记录或记录的视图不在当前布局中，则根据当前布局选择
-    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
-      const left = previousBrowserView;
-      const right = embeddedBrowserView;
-      const views = mainWindow?.getBrowserViews() || [];
-      if (!target || !views.includes(target)) {
-        if (right?.webContents?.isFocused && right.webContents.isFocused()) {
-          target = right;
-        } else if (left?.webContents?.isFocused && left.webContents.isFocused()) {
-          target = left;
-        } else {
-          // 默认刷新右侧（更像“浏览器区”）
-          target = right;
-        }
-      }
-    } else {
-      // 全屏单视图
-      target = currentBrowserView || target;
-    }
+    const target = getTargetViewForAction();
     if (!target || !target.webContents) return;
     if (ignoreCache && typeof target.webContents.reloadIgnoringCache === 'function') {
       target.webContents.reloadIgnoringCache();
@@ -226,6 +206,34 @@ function reloadActivePane(ignoreCache = false) {
     }
   } catch (e) {
     console.error('reloadActivePane error:', e);
+  }
+}
+
+// 选择当前操作（如 Open in Tab / 刷新）应作用的视图
+function getTargetViewForAction() {
+  try {
+    // 首选最近聚焦的 BrowserView
+    let target = lastFocusedBrowserView;
+    const views = mainWindow?.getBrowserViews() || [];
+    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
+      const left = previousBrowserView;
+      const right = embeddedBrowserView;
+      if (!target || !views.includes(target)) {
+        if (right?.webContents?.isFocused && right.webContents.isFocused()) {
+          target = right;
+        } else if (left?.webContents?.isFocused && left.webContents.isFocused()) {
+          target = left;
+        } else {
+          // 默认使用右侧（更像“浏览器区”）
+          target = right;
+        }
+      }
+      return target;
+    }
+    // 非分屏：返回当前 AI 视图
+    return currentBrowserView || target;
+  } catch (e) {
+    return currentBrowserView;
   }
 }
 
@@ -1320,7 +1328,7 @@ ipcMain.on('open-embedded-browser-from-view', (event, url) => {
 
 ipcMain.on('get-current-url', (event) => {
   try {
-    const view = getActiveAiView();
+    const view = getTargetViewForAction();
     if (view && view.webContents) {
       const url = view.webContents.getURL();
       event.reply('current-url', url);
