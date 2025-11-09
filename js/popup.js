@@ -1255,17 +1255,9 @@ const renderMessage = (container, message) => {
 // 当前拖拽中的 provider key
 let __dragKey = null;
 
-const getTabsCollapsed = async () => {
-  try {
-    const { tabsCollapsed } = await chrome.storage?.local.get(['tabsCollapsed']);
-    return !!tabsCollapsed;
-  } catch (_) {
-    return false;
-  }
-};
-const setTabsCollapsed = async (v) => {
-  try { await chrome.storage?.local.set({ tabsCollapsed: !!v }); } catch (_) {}
-};
+// 侧栏始终显示：禁用“折叠”功能
+const getTabsCollapsed = async () => false;
+const setTabsCollapsed = async (_v) => { try { await chrome.storage?.local.set({ tabsCollapsed: false }); } catch (_) {} };
 
 // 渲染底部导航栏（左侧垂直栏）
 const renderProviderTabs = async (currentProviderKey) => {
@@ -1276,23 +1268,12 @@ const renderProviderTabs = async (currentProviderKey) => {
   tabsContainer.innerHTML = '';
 
   // 折叠状态与头部
-  const collapsed = await getTabsCollapsed();
-  tabsContainer.classList.toggle('collapsed', collapsed);
+  const collapsed = false; // 强制不折叠
+  tabsContainer.classList.remove('collapsed');
   const header = document.createElement('div');
   header.className = 'tabs-header';
-  const toggle = document.createElement('button');
-  toggle.className = 'tabs-toggle';
-  toggle.title = collapsed ? '展开' : '收起';
-  toggle.textContent = collapsed ? '›' : '≡';
-  toggle.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    const nv = !tabsContainer.classList.contains('collapsed');
-    tabsContainer.classList.toggle('collapsed', nv);
-    await setTabsCollapsed(nv);
-    // 不需要重建按钮，但为保持一致刷新头部图标
-    renderProviderTabs(currentProviderKey);
-  });
-  header.appendChild(toggle);
+  // 移除折叠开关，避免误操作导致宽度变化
+  // （保留 header 节点以维持布局一致性）
   tabsContainer.appendChild(header);
 
   // 获取所有提供商的顺序
@@ -1531,9 +1512,9 @@ const initializeBar = async () => {
       // 更新分割线位置的函数
       const updateDividerPositionFromRatio = (ratio) => {
         if (!splitDivider) return;
-        // 获取左侧导航栏的实际宽度（考虑折叠状态）
+        // 左侧导航栏固定显示，宽度为 60
         const providerTabs = document.getElementById('provider-tabs');
-        const sidebarWidth = providerTabs && providerTabs.classList.contains('collapsed') ? 0 : 60;
+        const sidebarWidth = (providerTabs && (providerTabs.offsetWidth || 60)) || 60;
         const availableWidth = window.innerWidth - sidebarWidth;
         const splitPoint = availableWidth * ratio;
         // 确保分隔线位置精确对齐
@@ -1711,7 +1692,7 @@ const initializeBar = async () => {
         // 获取左侧导航栏的实际宽度（考虑折叠状态）
         const getSidebarWidth = () => {
           const providerTabs = document.getElementById('provider-tabs');
-          return providerTabs && providerTabs.classList.contains('collapsed') ? 0 : 60;
+          return (providerTabs && (providerTabs.offsetWidth || 60)) || 60;
         };
         
         // 更新分割线位置（从比例计算）

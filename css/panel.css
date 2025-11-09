@@ -75,7 +75,7 @@ html {
 .drag-zone {
   position: absolute;
   top: 0;
-  left: 60px; /* 为左侧侧边栏留出空间 */
+  left: 52px; /* 为左侧侧边栏留出空间，与工具栏对齐 */
   right: 0;
   height: 80px; /* 更大的拖动区域 */
   -webkit-app-region: drag; /* 允许拖动 */
@@ -86,7 +86,7 @@ html {
 .hover-zone {
   position: absolute;
   top: 0;
-  left: 60px; /* 为左侧侧边栏留出空间 */
+  left: 52px; /* 为左侧侧边栏留出空间，与工具栏对齐 */
   right: 0;
   height: 80px; /* 和拖动区域一样高 */
   z-index: 10; /* 在拖动区域之上，但在工具栏之下 */
@@ -96,7 +96,7 @@ html {
 .toolbar {
   position: absolute;
   top: 8px;
-  left: 68px; /* 为左侧侧边栏留出空间 */
+  left: 8px;  /* 向左扩展：仅调整左侧外边距，不改变按钮间距 */
   right: 8px;
   height: 40px;
   display: flex;
@@ -401,6 +401,7 @@ html {
   width: 40px;
   padding: 0;
   font-size: 18px;
+  margin-right: 16px; /* 增加星号和右边元素的间距 */
 }
 .toolbar button#starBtn:hover {
   transform: scale(1.05);
@@ -893,7 +894,7 @@ html {
 }
 
 #provider-tabs.collapsed + #main-content .toolbar {
-  left: 38px; /* 调整工具栏位置 */
+  left: 8px; /* 与非折叠一致，工具栏覆盖一整行 */
 }
 
 #provider-tabs.collapsed + #main-content .address-bar {
