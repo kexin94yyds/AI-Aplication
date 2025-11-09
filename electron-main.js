@@ -11,7 +11,8 @@ const browserViews = {}; // 缓存所有 BrowserView
 let tray = null;
 let currentProviderKey = 'chatgpt'; // 跟踪当前 provider
 // 内嵌浏览器相关
-let embeddedBrowserView = null; // 内嵌浏览器视图（用于显示链接）
+let embeddedBrowserView = null; // 内嵌浏览器视图（用于显示链接或右侧打开 AI）
+let embeddedBrowserPartition = 'persist:embedded-browser'; // 当前右侧视图所用的分区（用于实现与左侧的登录互通）
 let previousBrowserView = null; // 保存打开内嵌浏览器前的 BrowserView
 let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
 // 跟踪最近获得焦点的 BrowserView（用于定向刷新）
@@ -33,12 +34,11 @@ let isInsertingText = false; // 标记是否正在插入文本，防止窗口位
 let windowPositionLock = false; // 窗口位置锁定标志，防止在特定操作时位置被改变
 
 // 统一获取“当前可注入的 AI 视图”
-// - 非分屏：返回 currentBrowserView
-// - 分屏：返回 previousBrowserView（左侧 AI）
+// 逻辑：优先最近聚焦的视图；分屏时若右侧有焦点则返回右侧，否则返回左侧；
+// 非分屏时返回当前视图。
 function getActiveAiView() {
   try {
-    if (isEmbeddedBrowserActive && previousBrowserView) return previousBrowserView;
-    return currentBrowserView;
+    return getTargetViewForAction();
   } catch (_) { return currentBrowserView; }
 }
 
@@ -239,21 +239,61 @@ function getTargetViewForAction() {
 
 // ============== 覆盖模式：暂时隐藏/恢复 BrowserView ==============
 let overlayDepth = 0;
+function ensureBrowserViewsAttached(where = 'unspecified') {
+  try {
+    if (!mainWindow) return;
+    const views = mainWindow.getBrowserViews();
+    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
+      const needLeft = !views.includes(previousBrowserView);
+      const needRight = !views.includes(embeddedBrowserView);
+      if (needLeft) { try { mainWindow.addBrowserView(previousBrowserView); } catch (_) {} }
+      if (needRight) { try { mainWindow.addBrowserView(embeddedBrowserView); } catch (_) {} }
+      if (needLeft || needRight) updateBrowserViewBounds();
+      if (needLeft || needRight) console.log('[EnsureAttach] split re-attached by', where);
+    } else if (currentBrowserView) {
+      const need = !views.includes(currentBrowserView);
+      if (need) {
+        try { mainWindow.addBrowserView(currentBrowserView); } catch (_) {}
+        updateBrowserViewBounds();
+        console.log('[EnsureAttach] single view re-attached by', where);
+      }
+    }
+  } catch (e) { console.warn('[EnsureAttach] error:', e); }
+}
 function detachBrowserView() {
   try {
-    if (mainWindow && currentBrowserView) {
-      mainWindow.removeBrowserView(currentBrowserView);
-      try { mainWindow.webContents.send('overlay-browserview', { action: 'detach', ts: Date.now() }); } catch (_) {}
+    if (!mainWindow) return;
+    if (isEmbeddedBrowserActive) {
+      // 分屏模式：需要把左右两个 BrowserView 都临时移除
+      try {
+        if (embeddedBrowserView) mainWindow.removeBrowserView(embeddedBrowserView);
+      } catch (_) {}
+      try {
+        if (previousBrowserView) mainWindow.removeBrowserView(previousBrowserView);
+      } catch (_) {}
+    } else if (currentBrowserView) {
+      // 单视图模式：只移除当前视图
+      try { mainWindow.removeBrowserView(currentBrowserView); } catch (_) {}
     }
+    try { mainWindow.webContents.send('overlay-browserview', { action: 'detach', ts: Date.now() }); } catch (_) {}
   } catch (e) { console.error('detachBrowserView error:', e); }
 }
 function attachBrowserView() {
   try {
-    if (mainWindow && currentBrowserView) {
-      mainWindow.addBrowserView(currentBrowserView);
+    if (!mainWindow) return;
+    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
+      // 分屏模式：恢复左右两个 BrowserView
+      try { mainWindow.addBrowserView(previousBrowserView); } catch (_) {}
+      try { mainWindow.addBrowserView(embeddedBrowserView); } catch (_) {}
       updateBrowserViewBounds();
-      try { mainWindow.webContents.send('overlay-browserview', { action: 'attach', ts: Date.now() }); } catch (_) {}
+    } else if (currentBrowserView) {
+      // 单视图模式：恢复当前视图
+      try { mainWindow.addBrowserView(currentBrowserView); } catch (_) {}
+      updateBrowserViewBounds();
     }
+    try { mainWindow.webContents.send('overlay-browserview', { action: 'attach', ts: Date.now() }); } catch (_) {}
+    // 再次确认已挂载
+    ensureBrowserViewsAttached('attachBrowserView');
   } catch (e) { console.error('attachBrowserView error:', e); }
 }
 
@@ -304,6 +344,7 @@ function createWindow() {
     },
     show: false // 初始隐藏
   });
+  try { mainWindow.webContents.setMaxListeners(0); } catch (_) {}
 
   // 加载 index.html（保留所有功能）
   mainWindow.loadFile('index.html');
@@ -311,6 +352,7 @@ function createWindow() {
   // 监听窗口大小变化，调整 BrowserView
   mainWindow.on('resize', () => {
     updateBrowserViewBounds();
+    ensureBrowserViewsAttached('resize');
   });
 
   // 窗口获得焦点时通知渲染进程做输入框回焦
@@ -341,6 +383,8 @@ function createWindow() {
       // 🔍 关键：焦点变化时不要重新设置窗口位置或层级，避免跳动
       // 只在必要时通知渲染进程
       try { mainWindow.webContents.send('app-focus', { ts: Date.now() }); } catch (_) {}
+      // 聚焦时补挂视图，避免白屏
+      ensureBrowserViewsAttached('window-focus');
     });
   } catch (_) {}
   
@@ -446,6 +490,7 @@ function getOrCreateBrowserView(providerKey) {
       enableRemoteModule: false,
     }
   });
+  try { view.webContents.setMaxListeners(0); } catch (_) {}
 
   // 跟踪焦点：点击该视图后，后续刷新将定向到它
   try {
@@ -703,6 +748,8 @@ function switchToProvider(providerKey) {
     }
     // 通知渲染进程切换成功
     mainWindow.webContents.send('provider-switched', providerKey);
+    // 兜底确保已挂载
+    ensureBrowserViewsAttached('switchToProvider');
   } catch (e) {
     console.error('Error adding BrowserView:', e);
   }
@@ -1076,11 +1123,35 @@ ipcMain.on('switch-provider', (event, payload) => {
   try {
     const providerKey = (typeof payload === 'object' && payload && payload.key) ? payload.key : payload;
     const url = (typeof payload === 'object' && payload && payload.url) ? payload.url : null;
+    const side = (typeof payload === 'object' && payload && payload.side) ? String(payload.side) : 'auto';
     console.log('IPC received switch-provider:', providerKey, url ? `(url: ${url})` : '');
 
     if (PROVIDERS[providerKey]) {
+      const provider = PROVIDERS[providerKey];
+
+      // 侧向策略：right/left/auto（auto 时依据分屏与最近聚焦视图判断）
+      let targetSide = side;
+      if (targetSide === 'auto') {
+        if (isEmbeddedBrowserActive && embeddedBrowserView) {
+          // 判断最近焦点是否在右侧
+          const rightFocused = (lastFocusedBrowserView === embeddedBrowserView) || (embeddedBrowserView?.webContents?.isFocused?.() === true);
+          targetSide = rightFocused ? 'right' : 'left';
+        } else {
+          targetSide = 'left';
+        }
+      }
+
+      if (targetSide === 'right') {
+        // 在右侧打开该 provider，使用相同分区以复用登录
+        const toUrl = url || provider.url;
+        openEmbeddedBrowser(toUrl, { partition: provider.partition });
+        // 不改变 currentProviderKey（左侧的活动 provider），避免误导
+        return;
+      }
+
+      // 默认在左侧切换 provider
       switchToProvider(providerKey);
-      
+
       // 如果提供了自定义 URL，在切换后导航到该 URL
       if (url && currentBrowserView && currentBrowserView.webContents) {
         console.log('Navigating to custom URL:', url);
@@ -1160,7 +1231,9 @@ ipcMain.on('open-in-browser', (event, url) => {
 
 // ============== 内嵌浏览器功能 ==============
 // 打开内嵌浏览器（分屏显示：左侧 AI 聊天，右侧链接页面）
-function openEmbeddedBrowser(url) {
+// 打开内嵌浏览器（可指定分区，便于与左侧 AI 共享登录会话）
+// opts.partition: 指定 session partition，例如 'persist:chatgpt'
+function openEmbeddedBrowser(url, opts = {}) {
   if (!mainWindow) {
     console.error('Cannot open embedded browser: mainWindow is null');
     return;
@@ -1173,17 +1246,33 @@ function openEmbeddedBrowser(url) {
       // 不隐藏，保持显示在左侧
     }
 
-    // 创建或重用内嵌浏览器视图
-    if (!embeddedBrowserView) {
+    // 需要的分区（为空则使用默认通用浏览分区）
+    const requestedPartition = (opts && typeof opts.partition === 'string' && opts.partition.trim())
+      ? opts.partition.trim()
+      : 'persist:embedded-browser';
+
+    // 如分区不一致，则销毁旧的右侧视图，重新按需创建，确保登录互通
+    const needRecreate = !embeddedBrowserView || embeddedBrowserPartition !== requestedPartition;
+    if (needRecreate) {
+      // 清理旧视图
+      try {
+        if (embeddedBrowserView && mainWindow) mainWindow.removeBrowserView(embeddedBrowserView);
+      } catch (_) {}
+      try { embeddedBrowserView?.destroy?.(); } catch (_) {}
+      embeddedBrowserView = null;
+
+      // 重新创建
       embeddedBrowserView = new BrowserView({
         webPreferences: {
-          partition: 'persist:embedded-browser',
+          partition: requestedPartition,
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
           enableRemoteModule: false,
         }
       });
+      try { embeddedBrowserView.webContents.setMaxListeners(0); } catch (_) {}
+      embeddedBrowserPartition = requestedPartition;
 
       // 监听导航事件
       embeddedBrowserView.webContents.on('did-navigate', (event, navigationUrl) => {
@@ -1247,6 +1336,8 @@ function openEmbeddedBrowser(url) {
     // 通知渲染进程
     mainWindow.webContents.send('embedded-browser-opened', { url });
     console.log('[Embedded Browser] Opened in split view:', url);
+    // 兜底确保已挂载
+    ensureBrowserViewsAttached('openEmbeddedBrowser');
   } catch (e) {
     console.error('[Embedded Browser] Error opening:', e);
   }
@@ -2050,6 +2141,8 @@ app.whenReady().then(() => {
   setTimeout(() => {
     showWindow();
     switchToProvider('chatgpt');
+    // 再次确认 BrowserView 已挂载
+    setTimeout(() => ensureBrowserViewsAttached('startup'), 300);
   }, 500);
 });
 

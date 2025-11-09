@@ -1,7 +1,7 @@
 {
   "name": "ai-sidebar-app",
   "version": "1.0.0",
-  "description": "全局 AI 侧边栏 - Mac 桌面应用",
+  "description": "全局 AI 侧边栏 - 跨平台桌面应用",
   "author": "AI Sidebar Team",
   "main": "electron-main.js",
   "scripts": {

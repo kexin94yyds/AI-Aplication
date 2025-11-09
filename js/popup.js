@@ -1115,6 +1115,9 @@ const ensureFrame = async (container, key, provider) => {
     if (window.electronAPI && window.electronAPI.switchProvider) {
       window.electronAPI.switchProvider({ key });
     }
+    // 防御性处理：如果之前遗留了覆盖模式（BrowserView 被临时移除），
+    // 这里尝试退出覆盖模式以确保视图被重新 attach。
+    try { window.electronAPI?.exitOverlay?.(); } catch (_) {}
     
     // 更新 Open in Tab 按钮
     try {
@@ -1892,6 +1895,29 @@ const initializeBar = async () => {
         } catch (err) {
           console.error('Error opening URL in tab:', err);
         }
+      });
+    }
+  } catch (_) {}
+
+  // 在覆盖模式下，隐藏/禁用分割线，避免穿透覆盖层
+  try {
+    if (IS_ELECTRON && window.electronAPI && window.electronAPI.onOverlayState) {
+      const setDividerOverlayState = (on) => {
+        try {
+          const splitDivider = document.getElementById('splitDivider');
+          if (!splitDivider) return;
+          // 在 overlay 期间完全禁用交互并视觉隐藏（不改变 display，避免布局抖动）
+          splitDivider.style.pointerEvents = on ? 'none' : 'auto';
+          splitDivider.style.opacity = on ? '0' : '';
+          splitDivider.style.zIndex = on ? '1' : '2147483647';
+        } catch (_) {}
+      };
+      window.electronAPI.onOverlayState((payload)=>{
+        try {
+          if (!payload || !payload.action) return;
+          if (payload.action === 'enter') setDividerOverlayState(true);
+          else if (payload.action === 'exit' && (!payload.depth || payload.depth === 0)) setDividerOverlayState(false);
+        } catch (_) {}
       });
     }
   } catch (_) {}
