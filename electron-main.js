@@ -19,6 +19,13 @@ let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
 let lastFocusedBrowserView = null;
 // 最近一次用于 Tab 切换的目标侧（'left' 或 'right'），用于“强制切换”体验
 let lastTabTargetSide = 'left';
+// 显式锁定 Tab 切换的目标侧：'left' | 'right' | null（不锁定）
+let forcedTabSide = null;
+// 当 BrowserView 已处理 Tab 时，短暂抑制主窗口的全局 Tab 处理，避免双触发
+let suppressGlobalTabUntilTs = 0;
+function suppressGlobalTab(ms = 140) {
+  try { suppressGlobalTabUntilTs = Date.now() + Math.max(60, Math.min(400, ms||140)); } catch (_) {}
+}
 let splitRatio = 0.5; // 分屏比例（0-1，0.5 表示各占一半）
 // 分割线命中区域（与渲染进程中的 .split-divider 保持一致）
 const DIVIDER_GUTTER = 24; // px，左右各一半作为留白，便于拖动
@@ -400,8 +407,11 @@ function createWindow() {
           // 全局 Tab 捕获：确保在顶部 UI 或任何非 BrowserView 焦点下也能切换
           if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
             event.preventDefault();
+            // 若 BrowserView 已经处理了本次 Tab，跳过全局处理，避免左右来回出现“平衡跳动”
+            if (Date.now() < suppressGlobalTabUntilTs) return;
             const dir = input.shift ? -1 : 1;
-            cycleToNextProvider(dir);
+            // 优先使用显式锁定；否则使用最近一次目标侧，避免焦点漂移
+            cycleToNextProvider(dir, forcedTabSide || lastTabTargetSide);
             return;
           }
 
@@ -627,6 +637,7 @@ function getOrCreateBrowserView(providerKey) {
             // 1) 拦截 Tab：用于切换 Provider
             if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
               event.preventDefault();
+              suppressGlobalTab();
               const dir = input.shift ? -1 : 1;
               cycleToNextProvider(dir, 'left');
               return;
@@ -666,7 +677,13 @@ function cycleToNextProvider(dir = 1, sidePreferred = null) {
   if (!mainWindow) return;
   // 决定切换目标侧：优先使用显式参数；否则根据最近一次 Tab 目标或焦点进行判断
   let side = 'left';
-  if (sidePreferred === 'left' || sidePreferred === 'right') {
+  // 显式锁定优先
+  if (forcedTabSide === 'left') {
+    side = 'left';
+  } else if (forcedTabSide === 'right') {
+    // 仅在右侧视图存在时强制右侧，否则优雅降级为左侧
+    side = (isEmbeddedBrowserActive && embeddedBrowserView) ? 'right' : 'left';
+  } else if (sidePreferred === 'left' || sidePreferred === 'right') {
     side = sidePreferred;
   } else if (isEmbeddedBrowserActive && embeddedBrowserView) {
     if (lastTabTargetSide === 'right') side = 'right';
@@ -675,6 +692,8 @@ function cycleToNextProvider(dir = 1, sidePreferred = null) {
       side = rightFocused ? 'right' : 'left';
     }
   }
+  // 记录这次切换所针对的一侧，提升后续 Tab 连续切换的稳定性
+  try { lastTabTargetSide = side; } catch (_) {}
   // 通过 IPC 通知渲染进程执行切换，并带上方向与目标侧（1=下一个，-1=上一个）
   try {
     mainWindow.webContents.send('cycle-provider', { dir: dir >= 0 ? 1 : -1, side });
@@ -682,6 +701,24 @@ function cycleToNextProvider(dir = 1, sidePreferred = null) {
     console.error('cycleToNextProvider send failed:', e);
   }
 }
+
+// ============== Tab 目标侧锁定（渲染层控制） ==============
+ipcMain.on('set-tab-lock', (event, side) => {
+  try {
+    const prev = forcedTabSide;
+    if (side === 'right') forcedTabSide = 'right';
+    else if (side === 'left') forcedTabSide = 'left';
+    else forcedTabSide = null;
+    if (prev !== forcedTabSide) {
+      try { mainWindow?.webContents.send('tab-lock-changed', { side: forcedTabSide }); } catch (_) {}
+    }
+    event?.reply?.('tab-lock-changed', { side: forcedTabSide });
+  } catch (e) { console.warn('set-tab-lock error:', e); }
+});
+
+ipcMain.on('get-tab-lock', (event) => {
+  try { event.reply('tab-lock-changed', { side: forcedTabSide }); } catch (_) {}
+});
 
 // 切换到指定的 provider
 function switchToProvider(providerKey) {
@@ -1322,6 +1359,7 @@ function openEmbeddedBrowser(url, opts = {}) {
             // 1) Tab to cycle providers (match left panel behavior)
             if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
               event.preventDefault();
+              suppressGlobalTab();
               const dir = input.shift ? -1 : 1;
               cycleToNextProvider(dir, 'right');
               return;
@@ -1500,6 +1538,17 @@ ipcMain.on('get-full-width-state', (event) => {
 // 渲染进程告知当前“强制切换”的目标侧
 ipcMain.on('active-side', (event, side) => {
   lastTabTargetSide = (side === 'right') ? 'right' : 'left';
+});
+
+// 聚焦右侧内嵌浏览器，便于连续 Tab/Shift+Tab 切换
+ipcMain.on('focus-embedded', () => {
+  try {
+    if (embeddedBrowserView && embeddedBrowserView.webContents) {
+      embeddedBrowserView.webContents.focus();
+      lastFocusedBrowserView = embeddedBrowserView;
+      lastTabTargetSide = 'right';
+    }
+  } catch (_) {}
 });
 
 // 设置顶部预留空间（由渲染进程计算需要的像素）

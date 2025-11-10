@@ -30,6 +30,7 @@ npm start
 - 支持多个 AI 提供商（ChatGPT, Claude, Gemini 等）
 - 本地存储支持
 - 始终置顶窗口
+- 分屏右侧地址栏支持“锁定 Tab 到右侧”（Lock ▶︎ 按钮）
 
 🚧 **待完善**
 - 窗口大小记忆
@@ -61,6 +62,11 @@ npm start
 1. **窗口动画**：使用定时器实现平滑的滑入/滑出效果
 2. **API 适配**：通过 electron-adapter.js 将 Chrome 插件 API 映射到 localStorage
 3. **全局快捷键**：使用 Electron 的 globalShortcut API
+
+### 使用技巧：锁定 Tab 到右侧
+- 在分屏模式下，地址栏内有一个 “Lock ▶︎” 按钮。
+- 点击开启后，Tab/Shift+Tab 将始终只在右侧循环切换（无论当前焦点在哪里）。
+- 再次点击可解除锁定；状态在本地记忆（重启后自动恢复）。
 
 ## 故障排除
 
@@ -194,5 +200,4 @@ open dist/AI\ Sidebar-*.dmg
 5. ⏳ 添加系统托盘
 6. ⏳ 自动更新功能
 7. ⏳ 代码签名和公证
-
 

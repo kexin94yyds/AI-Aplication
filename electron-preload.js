@@ -125,6 +125,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setActiveSide: (side) => {
     try { ipcRenderer.send('active-side', side === 'right' ? 'right' : 'left'); } catch (_) {}
   },
+
+  // Tab 锁定（将 Tab/Shift+Tab 强制绑定到某一侧；传入 'left' | 'right' | null）
+  setTabLock: (side) => {
+    try { ipcRenderer.send('set-tab-lock', side === 'left' ? 'left' : (side === 'right' ? 'right' : null)); } catch (_) {}
+  },
+  getTabLock: () => new Promise((resolve) => {
+    const handler = (event, payload) => { try { resolve((payload && payload.side) || null); } catch (_) { resolve(null); } finally { ipcRenderer.removeListener('tab-lock-changed', handler); } };
+    ipcRenderer.on('tab-lock-changed', handler);
+    try { ipcRenderer.send('get-tab-lock'); } catch (_) { resolve(null); }
+  }),
+  onTabLockChanged: (cb) => {
+    ipcRenderer.on('tab-lock-changed', (event, payload) => { try { cb(payload && payload.side); } catch (_) {} });
+  },
+
+  // 聚焦右侧内嵌浏览器，确保连续 Tab/Shift+Tab 无需点击
+  focusEmbedded: () => {
+    try { ipcRenderer.send('focus-embedded'); } catch (_) {}
+  },
   onAppFocus: (callback) => {
     ipcRenderer.on('app-focus', (event, payload) => { try { callback(payload); } catch (_) {} });
   },
