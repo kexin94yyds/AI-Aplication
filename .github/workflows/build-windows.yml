@@ -1,0 +1,49 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows installer
+        run: npm run dist -- --win
+        env:
+          # 防止 electron-builder 误认为要发布到 GitHub Release
+          CI: false
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Sidebar-Windows-Installer
+          path: |
+            dist/AI Sidebar Setup *.exe
+          if-no-files-found: warn
+
+      - name: Upload unpacked app
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Sidebar-Windows-Unpacked
+          path: |
+            dist/win-unpacked/**
+          if-no-files-found: warn
+
+
