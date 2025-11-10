@@ -120,6 +120,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onFullWidthChanged: (callback) => {
     ipcRenderer.on('full-width-changed', (event, state) => callback(state));
   },
+
+  // 侧向指示（渲染层 -> 主进程）
+  setActiveSide: (side) => {
+    try { ipcRenderer.send('active-side', side === 'right' ? 'right' : 'left'); } catch (_) {}
+  },
   onAppFocus: (callback) => {
     ipcRenderer.on('app-focus', (event, payload) => { try { callback(payload); } catch (_) {} });
   },

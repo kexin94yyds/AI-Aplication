@@ -17,6 +17,8 @@ let previousBrowserView = null; // 保存打开内嵌浏览器前的 BrowserView
 let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
 // 跟踪最近获得焦点的 BrowserView（用于定向刷新）
 let lastFocusedBrowserView = null;
+// 最近一次用于 Tab 切换的目标侧（'left' 或 'right'），用于“强制切换”体验
+let lastTabTargetSide = 'left';
 let splitRatio = 0.5; // 分屏比例（0-1，0.5 表示各占一半）
 // 分割线命中区域（与渲染进程中的 .split-divider 保持一致）
 const DIVIDER_GUTTER = 24; // px，左右各一半作为留白，便于拖动
@@ -388,11 +390,21 @@ function createWindow() {
     });
   } catch (_) {}
   
-  // 拦截窗口级快捷键：Cmd/Ctrl+R、Shift+Cmd/Ctrl+R、F5 → 刷新当前焦点区域
+  // 拦截窗口级快捷键：
+  // - Tab/Shift+Tab → 强制切换 AI Provider（无论当前焦点是否在视图内）
+  // - Cmd/Ctrl+R、Shift+Cmd/Ctrl+R、F5 → 刷新当前焦点区域
   try {
     mainWindow.webContents.on('before-input-event', (event, input) => {
       try {
         if (input && input.type === 'keyDown') {
+          // 全局 Tab 捕获：确保在顶部 UI 或任何非 BrowserView 焦点下也能切换
+          if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
+            event.preventDefault();
+            const dir = input.shift ? -1 : 1;
+            cycleToNextProvider(dir);
+            return;
+          }
+
           const isReloadKey = (
             ((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) ||
             (input.key === 'F5')
@@ -494,7 +506,7 @@ function getOrCreateBrowserView(providerKey) {
 
   // 跟踪焦点：点击该视图后，后续刷新将定向到它
   try {
-    view.webContents.on('focus', () => { lastFocusedBrowserView = view; });
+    view.webContents.on('focus', () => { lastFocusedBrowserView = view; lastTabTargetSide = 'left'; });
   } catch (_) {}
 
   // 可选：为 BrowserView 打开独立 DevTools 便于调试（命令行 --view-dev 或环境变量 AISB_VIEW_DEVTOOLS=1）
@@ -616,7 +628,7 @@ function getOrCreateBrowserView(providerKey) {
             if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
               event.preventDefault();
               const dir = input.shift ? -1 : 1;
-              cycleToNextProvider(dir);
+              cycleToNextProvider(dir, 'left');
               return;
             }
             // 2) 拦截刷新：仅刷新当前这个 BrowserView，避免主窗口被刷新导致分割线消失
@@ -650,11 +662,22 @@ function getOrCreateBrowserView(providerKey) {
 }
 
 // 循环切换到下一个 provider（由渲染进程调用）
-function cycleToNextProvider(dir = 1) {
+function cycleToNextProvider(dir = 1, sidePreferred = null) {
   if (!mainWindow) return;
-  // 通过 IPC 通知渲染进程执行切换，并带上方向（1=下一个，-1=上一个）
+  // 决定切换目标侧：优先使用显式参数；否则根据最近一次 Tab 目标或焦点进行判断
+  let side = 'left';
+  if (sidePreferred === 'left' || sidePreferred === 'right') {
+    side = sidePreferred;
+  } else if (isEmbeddedBrowserActive && embeddedBrowserView) {
+    if (lastTabTargetSide === 'right') side = 'right';
+    else {
+      const rightFocused = (lastFocusedBrowserView === embeddedBrowserView) || (embeddedBrowserView?.webContents?.isFocused?.() === true);
+      side = rightFocused ? 'right' : 'left';
+    }
+  }
+  // 通过 IPC 通知渲染进程执行切换，并带上方向与目标侧（1=下一个，-1=上一个）
   try {
-    mainWindow.webContents.send('cycle-provider', { dir: dir >= 0 ? 1 : -1 });
+    mainWindow.webContents.send('cycle-provider', { dir: dir >= 0 ? 1 : -1, side });
   } catch (e) {
     console.error('cycleToNextProvider send failed:', e);
   }
@@ -1296,6 +1319,15 @@ function openEmbeddedBrowser(url, opts = {}) {
       embeddedBrowserView.webContents.on('before-input-event', (event, input) => {
         try {
           if (input && input.type === 'keyDown') {
+            // 1) Tab to cycle providers (match left panel behavior)
+            if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
+              event.preventDefault();
+              const dir = input.shift ? -1 : 1;
+              cycleToNextProvider(dir, 'right');
+              return;
+            }
+
+            // 2) Reload only the embedded (right) view, not the whole window
             const isReloadKey = (
               ((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) ||
               (input.key === 'F5')
@@ -1318,12 +1350,13 @@ function openEmbeddedBrowser(url, opts = {}) {
     } catch (_) {}
     // 跟踪焦点：点击右侧内嵌浏览器后，刷新定向到右侧
     try {
-      embeddedBrowserView.webContents.on('focus', () => { lastFocusedBrowserView = embeddedBrowserView; });
+      embeddedBrowserView.webContents.on('focus', () => { lastFocusedBrowserView = embeddedBrowserView; lastTabTargetSide = 'right'; });
     } catch (_) {}
 
     // 加载 URL
     embeddedBrowserView.webContents.loadURL(url);
     isEmbeddedBrowserActive = true;
+    lastTabTargetSide = 'right';
 
     // 添加到窗口（与 AI 聊天视图同时显示）
     if (overlayDepth > 0) {
@@ -1352,6 +1385,7 @@ function closeEmbeddedBrowser() {
   try {
     // 先设置状态，确保 updateBrowserViewBounds 知道要恢复全屏
     isEmbeddedBrowserActive = false;
+    lastTabTargetSide = 'left';
     
     // 移除内嵌浏览器视图
     if (mainWindow && embeddedBrowserView) {
@@ -1461,6 +1495,11 @@ ipcMain.on('toggle-full-width', () => {
 });
 ipcMain.on('get-full-width-state', (event) => {
   event.reply('full-width-state', { isFullWidth });
+});
+
+// 渲染进程告知当前“强制切换”的目标侧
+ipcMain.on('active-side', (event, side) => {
+  lastTabTargetSide = (side === 'right') ? 'right' : 'left';
 });
 
 // 设置顶部预留空间（由渲染进程计算需要的像素）
@@ -1732,9 +1771,65 @@ function simulateSystemCopy() {
   });
 }
 
+// 优先从应用内的 BrowserView 读取选中的文字（左右任意一侧），
+// 若没有再回退到系统层面的选区读取。
+async function getSelectedTextFromViews() {
+  try {
+    if (!mainWindow) return '';
+    // 当前附着在窗口上的视图（分屏时有两个）
+    const views = (typeof mainWindow.getBrowserViews === 'function') ? mainWindow.getBrowserViews() : [];
+    const candidates = [];
+    for (const v of views) {
+      if (v && v.webContents) candidates.push(v);
+    }
+    // 同时兜底把两侧引用加入（即便未附着，也尝试读取）
+    if (currentBrowserView && !candidates.includes(currentBrowserView)) candidates.push(currentBrowserView);
+    if (embeddedBrowserView && !candidates.includes(embeddedBrowserView)) candidates.push(embeddedBrowserView);
+
+    let best = '';
+    const code = `(() => {
+      try {
+        let t = '';
+        const sel = window.getSelection && window.getSelection();
+        if (sel && sel.rangeCount) {
+          const s = String(sel.toString() || '');
+          if (s) t = s;
+        }
+        if (!t) {
+          const ae = document.activeElement;
+          if (ae) {
+            const tag = (ae.tagName || '').toLowerCase();
+            if (tag === 'textarea' || tag === 'input') {
+              const start = ae.selectionStart || 0;
+              const end = ae.selectionEnd || 0;
+              if (end > start) t = String((ae.value || '').slice(start, end));
+            } else if (ae.isContentEditable || ae.getAttribute?.('contenteditable') === 'true') {
+              const s = sel && sel.toString ? String(sel.toString() || '') : '';
+              if (s) t = s;
+            }
+          }
+        }
+        return t || '';
+      } catch (_) { return ''; }
+    })();`;
+    for (const v of candidates) {
+      try {
+        const t = await v.webContents.executeJavaScript(code);
+        if (t && String(t).trim().length > best.length) best = String(t).trim();
+      } catch (_) {}
+    }
+    return best;
+  } catch (_) { return ''; }
+}
+
 // 获取当前选中的文字
 async function getSelectedText() {
   try {
+    // 1) 先尝试从我们应用内的各个视图读取（支持“左选右贴/右选左贴”）
+    const fromViews = await getSelectedTextFromViews();
+    if (fromViews && fromViews.trim()) return fromViews;
+
+    // 2) 再回退到系统层面（前台应用或通过剪贴板复制）
     if (process.platform === 'darwin') {
       // macOS: 使用 AppleScript 直接获取选中的文字
       return new Promise((resolve) => {

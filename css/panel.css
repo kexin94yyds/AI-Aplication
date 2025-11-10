@@ -26,6 +26,12 @@
   --shadow-light: rgba(15, 23, 42, 0.08);
   --shadow-medium: rgba(15, 23, 42, 0.18);
   
+  /* 侧向高亮颜色（左=蓝，右=紫） */
+  --ring-left: #4285f4; /* Google Blue */
+  --ring-left-glow: rgba(66, 133, 244, 0.35);
+  --ring-right: #a855f7; /* Violet-500 */
+  --ring-right-glow: rgba(168, 85, 247, 0.35);
+  
   /* 通用尺寸 */
   --border-radius: 12px;
   --border-radius-small: 8px;
@@ -827,8 +833,18 @@ html {
 
 #provider-tabs button.active {
   background: #ffffff;
-  box-shadow: 0 0 0 2px #4285f4;
+  box-shadow: 0 0 0 2px var(--ring-left), 0 0 10px var(--ring-left-glow);
   opacity: 1;
+}
+
+/* 侧向指示：当切换目标是右侧时，用紫色光圈 */
+#provider-tabs.side-right button.active {
+  box-shadow: 0 0 0 2px var(--ring-right), 0 0 10px var(--ring-right-glow);
+}
+
+/* 明确左侧样式（默认即左侧），便于切换时覆盖 */
+#provider-tabs.side-left button.active {
+  box-shadow: 0 0 0 2px var(--ring-left), 0 0 10px var(--ring-left-glow);
 }
 
 

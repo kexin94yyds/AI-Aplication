@@ -335,17 +335,33 @@ async function deliverToSidePanel(message, fallbackKey) {
 }
 
 async function handleSendSelection() {
+  // 先尝试从侧边栏自身读取选区（当焦点在侧边栏内时）
+  async function requestSelectionFromPanel(timeout = 180) {
+    try {
+      return await new Promise((resolve) => {
+        let done = false;
+        try {
+          chrome.runtime.sendMessage({ type: 'aisb.request-selection' }, (res) => {
+            done = true;
+            resolve(res && res.ok ? (res.payload || null) : null);
+          });
+        } catch (_) { /* ignore */ }
+        setTimeout(() => { if (!done) resolve(null); }, timeout);
+      });
+    } catch (_) { return null; }
+  }
+
   const tab = await getActiveTab();
-  if (!tab || !tab.id || !tab.url) return;
-  // 尝试直接读取（依赖 activeTab 临时授权），失败时给出回退提示
   let text = '', html = '';
   try {
-    const res = await readSelectionFromTab(tab.id);
-    text = res.text || '';
-    html = res.html || '';
-  } catch (e) {
-    // ignore
+    const panelSel = await requestSelectionFromPanel();
+    if (panelSel && panelSel.text) { text = panelSel.text || ''; html = panelSel.html || ''; }
+  } catch (_) {}
+  // 若侧栏无选区，回退到活动标签页
+  if (!text && tab && tab.id) {
+    try { const res = await readSelectionFromTab(tab.id); text = res.text || ''; html = res.html || ''; } catch (_) {}
   }
+
   await openSidePanelForCurrentWindow();
   // give the panel a brief moment to mount listeners
   try { await new Promise(r=> setTimeout(r, 80)); } catch(_) {}
@@ -358,14 +374,16 @@ async function handleSendSelection() {
       type: 'aisb.insert-text',
       text,
       html,
-      tabId: tab.id,
-      tabTitle: tab.title || '',
-      tabUrl: tab.url || ''
+      tabId: tab?.id,
+      tabTitle: tab?.title || '',
+      tabUrl: tab?.url || ''
     };
     await deliverToSidePanel(payload, 'aisbPendingInsert');
   }
-  // 无论是否读取到选区，均安装临时键入代理
-  try { await installTypingRelay(tab.id); } catch (_) {}
+  // 无论是否读取到选区，尽量在活动页面安装临时键入代理
+  if (tab && tab.id) {
+    try { await installTypingRelay(tab.id); } catch (_) {}
+  }
 }
 
 async function handleCaptureScreenshot() {

@@ -339,6 +339,55 @@ const cachedFrameMeta = {}; // { [providerKey]: { origin: string } }
 // Track the latest known URL and title inside each provider frame (from content script)
 const currentUrlByProvider = {};   // { [providerKey]: string }
 const currentTitleByProvider = {}; // { [providerKey]: string }
+// Right-side (embedded browser) current state
+let __rightCurrentProvider = null; // providerKey currently on right side
+let __rightCurrentUrl = null;      // current URL on right side
+let __activeSide = 'left';         // 'left' | 'right' (for UI highlight)
+
+function setActiveSide(side) {
+  try {
+    __activeSide = (side === 'right') ? 'right' : 'left';
+    const tabs = document.getElementById('provider-tabs');
+    if (tabs) {
+      if (__activeSide === 'right') {
+        tabs.classList.add('side-right');
+        tabs.classList.remove('side-left');
+      } else {
+        tabs.classList.add('side-left');
+        tabs.classList.remove('side-right');
+      }
+    }
+
+    // 轻量同步：只切换样式与高亮，不整列表重渲（避免图标“跳动”）
+    try {
+      if (__activeSide === 'right') {
+        const k = __rightCurrentProvider || guessProviderKeyByUrl(__rightCurrentUrl);
+        if (k) highlightProviderOnTabs(k);
+      } else {
+        getProvider().then((k)=>{ if (k) highlightProviderOnTabs(k); });
+      }
+    } catch (_) {}
+
+    if (IS_ELECTRON && window.electronAPI?.setActiveSide) {
+      window.electronAPI.setActiveSide(__activeSide);
+    }
+  } catch (_) {}
+}
+
+// 仅更新左侧按钮的 active 类，避免整列表重建导致抖动
+function highlightProviderOnTabs(key) {
+  try {
+    const tabs = document.getElementById('provider-tabs');
+    if (!tabs) return false;
+    let found = false;
+    tabs.querySelectorAll('button[data-provider-id]')?.forEach((btn) => {
+      const isActive = btn.dataset.providerId === key;
+      if (isActive) found = true;
+      btn.classList.toggle('active', isActive);
+    });
+    return found;
+  } catch (_) { return false; }
+}
 
 // ---- History store helpers ----
 const HISTORY_KEY = 'aiLinkHistory';
@@ -464,6 +513,25 @@ function isDeepLink(providerKey, href) {
     }
   } catch (_) {}
   return false;
+}
+
+// 根据 URL 猜测 provider key（用于右侧内嵌浏览器）
+function guessProviderKeyByUrl(href) {
+  try {
+    if (!href) return null;
+    const u = new URL(href);
+    const host = (u.hostname || '').replace(/^www\./, '');
+    const ALL = PROVIDERS; // 仅从内置列表判断
+    for (const [key, p] of Object.entries(ALL)) {
+      const candidate = (p.baseUrl || p.iframeUrl || p.url || '').trim();
+      if (!candidate) continue;
+      try {
+        const chost = new URL(candidate).hostname.replace(/^www\./, '');
+        if (chost && chost === host) return key;
+      } catch (_) {}
+    }
+    return null;
+  } catch (_) { return null; }
 }
 function historyProviderLabel(key) {
   const m = PROVIDERS[key];
@@ -1356,6 +1424,9 @@ const renderProviderTabs = async (currentProviderKey) => {
       const container = document.getElementById('iframe');
       const openInTab = document.getElementById('openInTab');
       
+      // 点击左侧图标后，侧向指示为左侧
+      setActiveSide('left');
+
       await setProvider(key);
       const p = effectiveConfig(ALL, key, overrides);
       if (openInTab) {
@@ -1443,6 +1514,8 @@ const initializeBar = async () => {
 
   // 渲染底部导航栏
   await renderProviderTabs(currentProviderKey);
+  // 初始高亮为左侧
+  setActiveSide('left');
 
   // 监听窗口尺寸变化，持续把侧边栏实际宽度同步给主进程（带节流 + 可锁定）
   try {
@@ -1528,6 +1601,16 @@ const initializeBar = async () => {
       const addressBar = document.getElementById('addressBar');
       const addressInput = document.getElementById('addressInput');
       const addressGo = document.getElementById('addressGo');
+
+      // 与右侧相关的交互一律标记 activeSide=right，保证后续 Tab 切换走右侧
+      try {
+        addressBar?.addEventListener('mousedown', () => setActiveSide('right'));
+        addressBar?.addEventListener('focusin', () => setActiveSide('right'));
+        addressInput?.addEventListener('focus', () => setActiveSide('right'));
+        addressGo?.addEventListener('click', () => setActiveSide('right'));
+        const splitDividerEl = document.getElementById('splitDivider');
+        splitDividerEl?.addEventListener('mousedown', () => setActiveSide('right'));
+      } catch (_) {}
       
       // 判断输入是否为URL
       const isValidUrl = (string) => {
@@ -1543,10 +1626,10 @@ const initializeBar = async () => {
         }
       };
       
-      // 将搜索词转换为搜索URL
+      // 将搜索词转换为搜索URL（使用带 UDM/AEP 的 Google 入口）
       const getSearchUrl = (query) => {
-        // 使用Google搜索作为默认搜索引擎
-        return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+        const base = 'https://www.google.com/search?udm=50&aep=46&source=25q2-US-SearchSites-Site-CTA';
+        return `${base}&q=${encodeURIComponent(query)}`;
       };
       
       // 处理地址栏导航
@@ -1633,13 +1716,26 @@ const initializeBar = async () => {
       // 监听内嵌浏览器事件
       window.electronAPI.onEmbeddedBrowserOpened?.((data) => {
         showBackButton();
-        // 如果提供了URL，更新地址栏
-        if (data && data.url && addressInput) {
-          addressInput.value = data.url;
+        setActiveSide('right');
+        // 如果提供了URL，更新地址栏并同步右侧状态
+        if (data && data.url) {
+          try { addressInput && (addressInput.value = data.url); } catch (_) {}
+          try {
+            __rightCurrentUrl = data.url;
+            const k = guessProviderKeyByUrl(data.url);
+            if (k) { __rightCurrentProvider = k; highlightProviderOnTabs(k); }
+          } catch (_) {}
+        } else {
+          // 无 URL 时，尽量用现有记录刷新一次指示
+          try {
+            const k = __rightCurrentProvider || guessProviderKeyByUrl(__rightCurrentUrl);
+            if (k) highlightProviderOnTabs(k);
+          } catch (_) {}
         }
       });
       window.electronAPI.onEmbeddedBrowserClosed?.(() => {
         hideBackButton();
+        setActiveSide('left');
       });
       
       // 监听内嵌浏览器URL变化，更新地址栏
@@ -1648,6 +1744,19 @@ const initializeBar = async () => {
           if (data && data.url && addressInput) {
             addressInput.value = data.url;
           }
+          // 记录右侧当前 URL 与 provider（通过 URL 猜测），并在右侧激活时更新指示
+          try {
+            if (data && data.url) {
+              __rightCurrentUrl = data.url;
+              const k = guessProviderKeyByUrl(data.url);
+              if (k) {
+                __rightCurrentProvider = k;
+                // URL 变化通常意味着用户正在右侧操作，强制标记右侧为活动侧
+                setActiveSide('right');
+                highlightProviderOnTabs(k);
+              }
+            }
+          } catch (_) {}
         });
       }
       
@@ -2292,6 +2401,7 @@ const initializeBar = async () => {
   // Helper: cycle provider by direction (-1 prev, +1 next)
   const cycleProvider = async (dir) => {
     try {
+      setActiveSide('left');
       const container = document.getElementById('iframe');
       const openInTab = document.getElementById('openInTab');
       const btns = Array.from(document.querySelectorAll('#provider-tabs button[data-provider-id]'));
@@ -2340,6 +2450,38 @@ const initializeBar = async () => {
     } catch (_) {}
   };
   try { window.__AIPanelCycleProvider = cycleProvider; } catch (_) {}
+
+  // Helper: cycle provider on the RIGHT embedded browser
+  const cycleProviderRight = async (dir) => {
+    try {
+      const btns = Array.from(document.querySelectorAll('#provider-tabs button[data-provider-id]'));
+      const order = btns.map(b => b.dataset.providerId).filter(Boolean);
+      if (!order.length) return;
+
+      // 当前右侧 provider（优先使用记录；否则根据 URL 猜测；再退回第一个）
+      let cur = __rightCurrentProvider || guessProviderKeyByUrl(__rightCurrentUrl) || order[0];
+      let idx = order.indexOf(cur);
+      if (idx < 0) idx = 0;
+      const nextIdx = (idx + (dir || 1) + order.length) % order.length;
+      const nextKey = order[nextIdx];
+
+      const overridesNow = await getOverrides();
+      const customProviders = await loadCustomProviders();
+      const ALL = { ...PROVIDERS };
+      (customProviders || []).forEach((c) => { ALL[c.key] = c; });
+      const p = effectiveConfig(ALL, nextKey, overridesNow);
+
+      const preferred = (currentUrlByProvider && currentUrlByProvider[nextKey]) || p.baseUrl || p.iframeUrl || (ALL[nextKey] && (ALL[nextKey].iframeUrl || ALL[nextKey].baseUrl || ALL[nextKey].url)) || '';
+      if (IS_ELECTRON && window.electronAPI?.switchProvider) {
+        window.electronAPI.switchProvider({ key: nextKey, url: preferred, side: 'right' });
+      }
+      __rightCurrentProvider = nextKey;
+      if (preferred) __rightCurrentUrl = preferred;
+      // 右侧激活时，仅更新左侧高亮，避免重渲
+      try { setActiveSide('right'); highlightProviderOnTabs(nextKey); } catch (_) {}
+    } catch (_) {}
+  };
+  try { window.__AIPanelCycleProviderRight = cycleProviderRight; } catch (_) {}
 
   // Global keyboard shortcut to star current page (customizable, default: Ctrl+L)
   let __starShortcut = null;
@@ -2497,6 +2639,7 @@ try {
         const dir = (data.dir === 'prev') ? -1 : 1;
         // When message comes from iframe, don't focus the frame after switching
         __suppressNextFrameFocus = true;
+        setActiveSide('left');
         try { if (window.__AIPanelCycleProvider) window.__AIPanelCycleProvider(dir); } catch (_) {}
         __suppressNextFrameFocus = false;
         return;
@@ -2590,10 +2733,16 @@ initializeBar();
 // Tab 键切换：监听主进程的切换请求
 if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
   window.electronAPI.onCycleProvider((data) => {
-    // 调用已有的 cycleProvider 函数，支持方向（默认下一个）
+    // 根据目标侧（left/right）进行切换，默认 left
     const dir = (data && typeof data.dir === 'number') ? data.dir : 1;
-    if (window.__AIPanelCycleProvider) {
-      window.__AIPanelCycleProvider(dir >= 0 ? 1 : -1);
+    const side = (data && data.side) || 'left';
+    const step = dir >= 0 ? 1 : -1;
+    setActiveSide(side);
+    if (side === 'right') {
+      if (window.__AIPanelCycleProviderRight) window.__AIPanelCycleProviderRight(step);
+      else if (window.__AIPanelCycleProvider) window.__AIPanelCycleProvider(step);
+    } else {
+      if (window.__AIPanelCycleProvider) window.__AIPanelCycleProvider(step);
     }
   });
 }
@@ -2800,6 +2949,38 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         if (!message || !message.type) return;
+        if (message.type === 'aisb.request-selection') {
+          // 从当前活动的 provider frame 读取选中文本
+          try {
+            const target = getActiveProviderFrame();
+            if (!target || !target.contentWindow) { sendResponse({ ok:false }); return true; }
+            const reqId = String(Date.now() + Math.random());
+            let done = false;
+            const onMsg = (ev) => {
+              try {
+                const d = ev.data || {};
+                if (d && d.type === 'AI_SIDEBAR_SELECTION' && (!d.id || d.id === reqId)) {
+                  done = true;
+                  window.removeEventListener('message', onMsg);
+                  sendResponse({ ok:true, payload:{ text: String(d.text||''), html: String(d.html||'') } });
+                }
+              } catch (_) {}
+            };
+            window.addEventListener('message', onMsg);
+            try { target.contentWindow.postMessage({ type:'AI_SIDEBAR_GET_SELECTION', id: reqId }, '*'); } catch (_) {}
+            // 超时保护
+            setTimeout(() => {
+              if (!done) {
+                try { window.removeEventListener('message', onMsg); } catch (_) {}
+                sendResponse({ ok:false });
+              }
+            }, 250);
+            return true; // async response
+          } catch (_) {
+            sendResponse({ ok:false });
+            return true;
+          }
+        }
         if (message.type === 'aisb.notify') {
           toast(message.text || '', message.level || 'info');
           return;
@@ -3101,6 +3282,8 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     });
     
     searchBtn.addEventListener('click', () => {
+      // 任何点击搜索都视为要操作右侧
+      setActiveSide('right');
       // 聚焦到地址栏
       const addressInput = document.getElementById('addressInput');
       const addressBar = document.getElementById('addressBar');
@@ -3110,9 +3293,10 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
         if (addressBar.style.display === 'none') {
           // 如果没有打开内嵌浏览器，提示用户或打开一个默认页面
           if (IS_ELECTRON && window.electronAPI) {
-            // 可以打开一个默认的搜索页面
-            const defaultUrl = 'https://www.google.com';
+            // 可以打开一个默认的搜索页面（UDM/AEP 入口）
+            const defaultUrl = 'https://www.google.com/search?udm=50&aep=46&source=25q2-US-SearchSites-Site-CTA';
             window.electronAPI.openEmbeddedBrowser(defaultUrl);
+            setActiveSide('right');
             // 等待地址栏显示后聚焦
             setTimeout(() => {
               if (addressInput) {
