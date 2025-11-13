@@ -1347,6 +1347,11 @@ const renderProviderTabs = async (currentProviderKey) => {
   // （保留 header 节点以维持布局一致性）
   tabsContainer.appendChild(header);
 
+  // 为 tabs-header 添加双击最大化/还原功能
+  header.addEventListener('dblclick', (e) => {
+    try { window.electronAPI.toggleFullWidth?.(); } catch (_) {}
+  });
+
   // 获取所有提供商的顺序
   let providerOrder = await chrome.storage.local.get('providerOrder').then(r => r.providerOrder || Object.keys(PROVIDERS));
   
@@ -3425,5 +3430,21 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
         } catch (_) {}
       });
     } catch (_) {}
+  } catch (_) {}
+})();
+
+// ============== 移除窗口尺寸调试显示 ==============
+(function removeSizeIndicator() {
+  try {
+    const removeIndicator = () => {
+      const indicator = document.getElementById('window-size-indicator');
+      if (indicator) {
+        indicator.remove();
+      }
+    };
+    // 页面加载时移除
+    removeIndicator();
+    // 定期检查并移除（防止其他代码重新添加）
+    setInterval(removeIndicator, 500);
   } catch (_) {}
 })();

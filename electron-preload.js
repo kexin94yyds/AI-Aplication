@@ -234,6 +234,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     } catch (e) {
       console.error('[Preload] lockWindowPosition error:', e);
     }
+  },
+  
+  // 窗口最大化/恢复
+  toggleMaximize: () => {
+    try {
+      ipcRenderer.send('toggle-maximize');
+    } catch (e) {
+      console.error('[Preload] toggleMaximize error:', e);
+    }
+  },
+  
+  // 获取窗口是否最大化
+  isMaximized: () => {
+    return new Promise((resolve) => {
+      ipcRenderer.once('is-maximized-response', (event, isMaximized) => {
+        resolve(isMaximized);
+      });
+      ipcRenderer.send('is-maximized');
+    });
+  },
+  
+  // 监听窗口最大化状态变化
+  onMaximizeChanged: (callback) => {
+    ipcRenderer.on('maximize-changed', (event, isMaximized) => {
+      callback(isMaximized);
+    });
   }
 });
 

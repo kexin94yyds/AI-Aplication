@@ -801,6 +801,8 @@ html {
   backdrop-filter: blur(6px);
   z-index: 1;
   width: 100%;
+  -webkit-app-region: drag; /* 允许拖动窗口 */
+  cursor: move;
 }
 
 #provider-tabs .tabs-toggle {

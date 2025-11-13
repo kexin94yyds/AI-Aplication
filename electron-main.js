@@ -362,6 +362,13 @@ function createWindow() {
   mainWindow.on('resize', () => {
     updateBrowserViewBounds();
     ensureBrowserViewsAttached('resize');
+    // 移除尺寸显示（如果存在）
+    try {
+      mainWindow.webContents.executeJavaScript(`
+        const sizeIndicator = document.getElementById('window-size-indicator');
+        if (sizeIndicator) sizeIndicator.remove();
+      `).catch(() => {});
+    } catch (_) {}
   });
 
   // 窗口获得焦点时通知渲染进程做输入框回焦
