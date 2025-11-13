@@ -1397,7 +1397,8 @@ const renderProviderTabs = async (currentProviderKey) => {
 
     const button = document.createElement('button');
     button.dataset.providerId = key;
-    button.title = cfg.label; // 悬停提示
+    // 添加Cmd+点击提示到悬停文本
+    button.title = `${cfg.label}\n\n💡 提示：按住 Cmd 键点击可在右侧分屏打开`; // 悬停提示
     button.className = key === currentProviderKey ? 'active' : '';
     if (__rightCurrentProvider === key) button.classList.add('right-active');
     button.draggable = !collapsed;
@@ -1426,11 +1427,50 @@ const renderProviderTabs = async (currentProviderKey) => {
     }
 
     // 点击切换提供商
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async (event) => {
       const container = document.getElementById('iframe');
       const openInTab = document.getElementById('openInTab');
       
-      // 点击左侧图标后，侧向指示为左侧
+      // 检测是否按下了Cmd键（Mac）或Ctrl键（Windows/Linux）
+      const isCommandClick = event.metaKey || event.ctrlKey;
+      
+      if (isCommandClick) {
+        // Cmd+点击：触发分屏功能
+        console.log('[Split Screen] Cmd+Click detected for provider:', key);
+        
+        // 设置右侧激活状态
+        setActiveSide('right');
+        
+        // 通知主进程打开分屏模式
+        if (IS_ELECTRON && window.electronAPI?.openEmbeddedBrowser) {
+          const p = effectiveConfig(ALL, key, overrides);
+          const url = (currentUrlByProvider && currentUrlByProvider[key]) || p.iframeUrl || p.baseUrl;
+          
+          // 检查是否已经在右侧显示相同的provider
+          if (__rightCurrentProvider === key) {
+            console.log('[Split Screen] Provider already active on right side, refreshing...');
+            // 如果已经是右侧的provider，可以选择刷新或重新聚焦
+            if (window.electronAPI?.focusEmbeddedBrowser) {
+              window.electronAPI.focusEmbeddedBrowser();
+            }
+          } else {
+            // 打开右侧分屏
+            window.electronAPI.openEmbeddedBrowser(url);
+            
+            // 更新右侧激活的provider
+            __rightCurrentProvider = key;
+            
+            console.log('[Split Screen] Opened right panel with provider:', key, 'URL:', url);
+          }
+          
+          // 更新UI状态：添加紫色光圈
+          highlightProviderOnTabs(key);
+        }
+        
+        return; // 不执行普通的切换逻辑
+      }
+      
+      // 普通点击：切换左侧provider
       setActiveSide('left');
 
       await setProvider(key);
