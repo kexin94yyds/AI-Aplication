@@ -1693,6 +1693,19 @@ function openThirdScreen(url, opts = {}) {
   } catch (e) { console.error('openThirdScreen error:', e); }
 }
 
+function closeThirdScreen() {
+  try {
+    if (!thirdBrowserView) return;
+    if (mainWindow) {
+      try { mainWindow.removeBrowserView(thirdBrowserView); } catch (_) {}
+    }
+    // 保留 thirdBrowserView 对象以便下次复用其 session，但退出三分屏模式
+    isThreeScreenMode = false;
+    updateBrowserViewBounds();
+    try { mainWindow?.webContents.send('third-screen-closed'); } catch (_) {}
+  } catch (e) { console.error('closeThirdScreen error:', e); }
+}
+
 // 设置顶部预留空间（由渲染进程计算需要的像素）
 ipcMain.on('set-top-inset', (event, px) => {
   try {
@@ -1759,6 +1772,26 @@ ipcMain.on('focus-third', () => {
       lastTabTargetSide = 'third';
     }
   } catch (_) {}
+});
+
+// 关闭第三屏
+ipcMain.on('close-third-screen', () => {
+  closeThirdScreen();
+});
+
+// 根据焦点或显式侧关闭右侧或第三屏
+ipcMain.on('close-active-pane', (event, payload) => {
+  try {
+    const side = payload && payload.side;
+    if (side === 'third') { closeThirdScreen(); return; }
+    if (side === 'right') { closeEmbeddedBrowser(); return; }
+    // 未显式指定：依据最近焦点
+    if (lastFocusedBrowserView === thirdBrowserView) { closeThirdScreen(); return; }
+    if (lastFocusedBrowserView === embeddedBrowserView) { closeEmbeddedBrowser(); return; }
+    // 兜底：优先关第三，其次右侧
+    if (thirdBrowserView) closeThirdScreen();
+    else if (isEmbeddedBrowserActive) closeEmbeddedBrowser();
+  } catch (e) { console.error('close-active-pane error:', e); }
 });
 
 // 设置左侧导航栏宽度（由渲染进程根据 DOM 实际宽度上报）

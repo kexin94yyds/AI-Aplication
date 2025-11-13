@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeEmbeddedBrowser: () => {
     ipcRenderer.send('close-embedded-browser');
   },
+  closeThirdScreen: () => {
+    ipcRenderer.send('close-third-screen');
+  },
+  closeActivePane: (side) => {
+    ipcRenderer.send('close-active-pane', { side });
+  },
   onEmbeddedBrowserOpened: (callback) => {
     ipcRenderer.on('embedded-browser-opened', (event, data) => callback(data));
   },
@@ -62,6 +68,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   focusThirdScreen: () => {
     try { ipcRenderer.send('focus-third'); } catch (_) {}
+  },
+  onThirdClosed: (callback) => {
+    ipcRenderer.on('third-screen-closed', () => callback && callback());
   },
   // 左侧导航栏宽度（用于让出 BrowserView 左边距）
   setSidebarWidth: (px) => {

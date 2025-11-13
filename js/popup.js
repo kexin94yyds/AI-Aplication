@@ -1989,11 +1989,39 @@ const initializeBar = async () => {
         }
       });
       window.electronAPI.onEmbeddedBrowserClosed?.(() => {
-        hideBackButton();
-        setActiveSide('left');
+        // 如果三分屏仍然开启（第三屏存在），保留 Return 按钮用于关闭第三屏
+        if (__threeScreenMode) {
+          try {
+            // 隐藏与右侧相关的 UI，但保留返回按钮
+            const addressBar = document.getElementById('addressBar');
+            if (addressBar) addressBar.style.display = 'none';
+            const splitDivider = document.getElementById('splitDivider');
+            if (splitDivider) splitDivider.style.display = 'none';
+            // 确保返回按钮仍可用
+            backBtn.style.display = 'inline-flex';
+          } catch (_) {}
+        } else {
+          hideBackButton();
+          setActiveSide('left');
+        }
         __rightCurrentProvider = null;
         try { highlightProviderOnTabs(null); } catch (_) {}
       });
+
+      // 监听第三屏关闭事件：恢复到二分屏 UI
+      try {
+        window.electronAPI.onThirdClosed?.(() => {
+          try {
+            __threeScreenMode = false;
+            const body = document.body;
+            body.classList.remove('three-screen-mode');
+            const thirdDivider = document.getElementById('thirdDivider');
+            if (thirdDivider) thirdDivider.style.display = 'none';
+            // 回到右侧为激活侧
+            setActiveSide('right');
+          } catch (_) {}
+        });
+      } catch (_) {}
       
       // 监听内嵌浏览器URL变化，更新地址栏
       if (addressInput && window.electronAPI) {
@@ -2078,9 +2106,11 @@ const initializeBar = async () => {
         }
       }
       
-      // 返回按钮点击事件
+      // 返回按钮点击：关闭当前活动的右侧/第三屏
       backBtn.addEventListener('click', () => {
-        if (window.electronAPI?.closeEmbeddedBrowser) {
+        if (window.electronAPI?.closeActivePane) {
+          try { window.electronAPI.closeActivePane(__activeSide); } catch (_) {}
+        } else if (window.electronAPI?.closeEmbeddedBrowser) {
           window.electronAPI.closeEmbeddedBrowser();
         }
       });
@@ -2093,12 +2123,13 @@ const initializeBar = async () => {
         });
       }
       
-      // Esc 键关闭内嵌浏览器
+      // Esc 键关闭活动侧（右或第三）
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && backBtn.style.display !== 'none') {
-          if (window.electronAPI?.closeEmbeddedBrowser) {
-            window.electronAPI.closeEmbeddedBrowser();
-          }
+          try {
+            if (window.electronAPI?.closeActivePane) window.electronAPI.closeActivePane(__activeSide);
+            else if (window.electronAPI?.closeEmbeddedBrowser) window.electronAPI.closeEmbeddedBrowser();
+          } catch (_) {}
         }
       });
       
