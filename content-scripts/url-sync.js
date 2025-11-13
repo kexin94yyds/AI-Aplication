@@ -841,6 +841,8 @@
       const els = [];
       // Common inputs
       els.push(...document.querySelectorAll('textarea'));
+      // Gemini editor
+      try { els.push(...document.querySelectorAll('.ql-editor')); } catch (_) {}
       els.push(...document.querySelectorAll('div[contenteditable="true"]'));
       els.push(...document.querySelectorAll('[role="textbox"], [aria-label*="prompt" i], [data-testid*="prompt" i], [data-testid*="textbox" i]'));
       // Filter visible and enabled

@@ -1656,6 +1656,8 @@ async function insertImageIntoCurrentView(dataUrl) {
           function findPromptElement() {
             const selectors = [
               'textarea',
+              // Gemini editor
+              '.ql-editor',
               'div[contenteditable="true"]',
               '[role="textbox"]',
               '[aria-label*="prompt" i]',
@@ -1743,6 +1745,8 @@ async function focusPromptInCurrentView() {
           function findPromptElement() {
             const selectors = [
               'textarea',
+              // Gemini editor
+              '.ql-editor',
               'div[contenteditable="true"]',
               '[role="textbox"]',
               '[aria-label*="prompt" i]',
@@ -1961,6 +1965,8 @@ async function insertTextIntoCurrentView(text) {
           function findPromptElement() {
             const selectors = [
               'textarea',
+              // Gemini editor
+              '.ql-editor',
               'div[contenteditable="true"]',
               '[role="textbox"]',
               '[aria-label*="prompt" i]',
