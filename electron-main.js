@@ -2290,9 +2290,10 @@ app.whenReady().then(() => {
   
   // 首次启动时显示窗口并加载默认 provider
   setTimeout(() => {
+    // 仅显示窗口，具体加载哪个 Provider 交由渲染进程的首帧初始化决定
+    // 避免强制切到 ChatGPT 覆盖用户的首次点击（例如点了 Gemini 但被切回 ChatGPT）
     showWindow();
-    switchToProvider('chatgpt');
-    // 再次确认 BrowserView 已挂载
+    // 兜底：稍后确认视图已挂载（渲染层会通过 switch-provider 指定）
     setTimeout(() => ensureBrowserViewsAttached('startup'), 300);
   }, 500);
 });

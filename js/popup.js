@@ -1567,7 +1567,14 @@ const initializeBar = async () => {
   const container = document.getElementById('iframe');
   const openInTab = document.getElementById('openInTab');
 
-  const currentProviderKey = await getProvider();
+  // 启动时按“第一行图标”（providerOrder 的第一个）作为默认 Provider
+  // 而不是使用历史记录或硬编码 chatgpt，确保与左侧列表顺序一致
+  let providerOrder = [];
+  try { providerOrder = await getProviderOrder(); } catch (_) { providerOrder = Object.keys(PROVIDERS); }
+  const startupKey = (Array.isArray(providerOrder) && providerOrder.length > 0) ? providerOrder[0] : 'chatgpt';
+  // 将当前 provider 固定为首个图标，并写回存储，保持 UI 状态同步
+  await setProvider(startupKey);
+  const currentProviderKey = startupKey;
   const overrides = await getOverrides();
   const mergedCurrent = effectiveConfig(PROVIDERS, currentProviderKey, overrides) || (PROVIDERS[currentProviderKey] || PROVIDERS.chatgpt);
 
