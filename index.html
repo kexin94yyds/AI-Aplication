@@ -21,6 +21,7 @@
       <div class="toolbar">
         <button id="starBtn" type="button" title="Star/Unstar current page">☆</button>
         <button id="backBtn" type="button" title="Return (Esc)" style="display:none;">Return</button>
+        <button id="alignBtn" type="button" title="Send to multiple AIs (Cmd+Shift+A)" style="display:none;">Align</button>
         <div class="toolbar-spacer" title="拖动窗口"></div>
         <button id="openInTab" type="button" title="Open in Chrome (Ctrl+O)">Open in Tab</button>
         <button id="favoritesBtn" type="button" title="View favorites">Favorites</button>
@@ -33,6 +34,8 @@
       <div id="favoritesPanel" class="favorites-panel" style="display:none;"></div>
       <!-- Settings modal -->
       <div id="settingsModal" class="settings-modal" style="display:none;"></div>
+      <!-- Align modal -->
+      <div id="alignModal" class="align-modal" style="display:none;"></div>
       <!-- Search bar -->
       <div id="searchBar" class="search-bar" style="display:none;">
         <div class="search-input-wrapper">
@@ -54,8 +57,12 @@
         </div>
       </div>
       <div id="iframe"></div>
+      <!-- 第三屏容器 -->
+      <div id="thirdScreen" style="display:none;"></div>
       <!-- 分屏分割线指示器 -->
       <div id="splitDivider" class="split-divider" style="display:none;"></div>
+      <!-- 第三屏分割线指示器 -->
+      <div id="thirdDivider" class="split-divider" style="display:none;"></div>
     </main>
     <!-- Electron 适配器 - 必须在其他脚本之前加载 -->
     <script src="electron-adapter.js"></script>

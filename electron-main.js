@@ -15,10 +15,16 @@ let embeddedBrowserView = null; // 内嵌浏览器视图（用于显示链接或
 let embeddedBrowserPartition = 'persist:embedded-browser'; // 当前右侧视图所用的分区（用于实现与左侧的登录互通）
 let previousBrowserView = null; // 保存打开内嵌浏览器前的 BrowserView
 let isEmbeddedBrowserActive = false; // 标记内嵌浏览器是否激活
+// 第三屏视图
+let thirdBrowserView = null;
+let thirdBrowserPartition = 'persist:third';
+let isThreeScreenMode = false;
+let threeSplitR1 = 1/3; // 左列在 free 宽度中的占比
+let threeSplitR2 = 1/3; // 中列在 free 宽度中的占比
 // 跟踪最近获得焦点的 BrowserView（用于定向刷新）
 let lastFocusedBrowserView = null;
 // 最近一次用于 Tab 切换的目标侧（'left' 或 'right'），用于“强制切换”体验
-let lastTabTargetSide = 'left';
+let lastTabTargetSide = 'left'; // 'left' | 'right' | 'third'
 // 显式锁定 Tab 切换的目标侧：'left' | 'right' | null（不锁定）
 let forcedTabSide = null;
 // 当 BrowserView 已处理 Tab 时，短暂抑制主窗口的全局 Tab 处理，避免双触发
@@ -49,6 +55,19 @@ function getActiveAiView() {
   try {
     return getTargetViewForAction();
   } catch (_) { return currentBrowserView; }
+}
+
+// Helper: get the LEFT view when split is active; otherwise current view
+function getLeftAiView() {
+  try {
+    if (isEmbeddedBrowserActive && previousBrowserView) return previousBrowserView;
+    return currentBrowserView || previousBrowserView || null;
+  } catch (_) { return null; }
+}
+
+// Helper: get the RIGHT embedded view (if any)
+function getRightAiView() {
+  try { return (isEmbeddedBrowserActive && embeddedBrowserView) ? embeddedBrowserView : null; } catch (_) { return null; }
 }
 
 // ============== 与插件数据同步（JSON 文件） ==============
@@ -224,17 +243,20 @@ function getTargetViewForAction() {
     // 首选最近聚焦的 BrowserView
     let target = lastFocusedBrowserView;
     const views = mainWindow?.getBrowserViews() || [];
-    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
-      const left = previousBrowserView;
-      const right = embeddedBrowserView;
+    if ((isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) || (isThreeScreenMode && thirdBrowserView)) {
+      const left = previousBrowserView || currentBrowserView;
+      const mid = embeddedBrowserView;
+      const right2 = thirdBrowserView;
       if (!target || !views.includes(target)) {
-        if (right?.webContents?.isFocused && right.webContents.isFocused()) {
-          target = right;
+        if (right2?.webContents?.isFocused && right2.webContents.isFocused()) {
+          target = right2;
+        } else if (mid?.webContents?.isFocused && mid.webContents.isFocused()) {
+          target = mid;
         } else if (left?.webContents?.isFocused && left.webContents.isFocused()) {
           target = left;
         } else {
-          // 默认使用右侧（更像“浏览器区”）
-          target = right;
+          // 默认优先中间（嵌入浏览器），其次第三屏
+          target = mid || right2 || left;
         }
       }
       return target;
@@ -252,13 +274,15 @@ function ensureBrowserViewsAttached(where = 'unspecified') {
   try {
     if (!mainWindow) return;
     const views = mainWindow.getBrowserViews();
-    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
-      const needLeft = !views.includes(previousBrowserView);
-      const needRight = !views.includes(embeddedBrowserView);
+    if ((isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) || (isThreeScreenMode && thirdBrowserView)) {
+      const needLeft = previousBrowserView && !views.includes(previousBrowserView);
+      const needMid = embeddedBrowserView && !views.includes(embeddedBrowserView);
+      const needRight2 = thirdBrowserView && !views.includes(thirdBrowserView);
       if (needLeft) { try { mainWindow.addBrowserView(previousBrowserView); } catch (_) {} }
-      if (needRight) { try { mainWindow.addBrowserView(embeddedBrowserView); } catch (_) {} }
-      if (needLeft || needRight) updateBrowserViewBounds();
-      if (needLeft || needRight) console.log('[EnsureAttach] split re-attached by', where);
+      if (needMid) { try { mainWindow.addBrowserView(embeddedBrowserView); } catch (_) {} }
+      if (needRight2) { try { mainWindow.addBrowserView(thirdBrowserView); } catch (_) {} }
+      if (needLeft || needMid || needRight2) updateBrowserViewBounds();
+      if (needLeft || needMid || needRight2) console.log('[EnsureAttach] split/three re-attached by', where);
     } else if (currentBrowserView) {
       const need = !views.includes(currentBrowserView);
       if (need) {
@@ -272,14 +296,11 @@ function ensureBrowserViewsAttached(where = 'unspecified') {
 function detachBrowserView() {
   try {
     if (!mainWindow) return;
-    if (isEmbeddedBrowserActive) {
-      // 分屏模式：需要把左右两个 BrowserView 都临时移除
-      try {
-        if (embeddedBrowserView) mainWindow.removeBrowserView(embeddedBrowserView);
-      } catch (_) {}
-      try {
-        if (previousBrowserView) mainWindow.removeBrowserView(previousBrowserView);
-      } catch (_) {}
+    if (isEmbeddedBrowserActive || isThreeScreenMode) {
+      // 分屏/三分屏：移除现有视图
+      try { if (embeddedBrowserView) mainWindow.removeBrowserView(embeddedBrowserView); } catch (_) {}
+      try { if (previousBrowserView) mainWindow.removeBrowserView(previousBrowserView); } catch (_) {}
+      try { if (thirdBrowserView) mainWindow.removeBrowserView(thirdBrowserView); } catch (_) {}
     } else if (currentBrowserView) {
       // 单视图模式：只移除当前视图
       try { mainWindow.removeBrowserView(currentBrowserView); } catch (_) {}
@@ -290,10 +311,11 @@ function detachBrowserView() {
 function attachBrowserView() {
   try {
     if (!mainWindow) return;
-    if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
-      // 分屏模式：恢复左右两个 BrowserView
-      try { mainWindow.addBrowserView(previousBrowserView); } catch (_) {}
-      try { mainWindow.addBrowserView(embeddedBrowserView); } catch (_) {}
+    if ((isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) || (isThreeScreenMode && thirdBrowserView)) {
+      // 分屏/三分屏：恢复现有视图
+      try { if (previousBrowserView) mainWindow.addBrowserView(previousBrowserView); } catch (_) {}
+      try { if (embeddedBrowserView) mainWindow.addBrowserView(embeddedBrowserView); } catch (_) {}
+      try { if (thirdBrowserView) mainWindow.addBrowserView(thirdBrowserView); } catch (_) {}
       updateBrowserViewBounds();
     } else if (currentBrowserView) {
       // 单视图模式：恢复当前视图
@@ -690,8 +712,15 @@ function cycleToNextProvider(dir = 1, sidePreferred = null) {
   } else if (forcedTabSide === 'right') {
     // 仅在右侧视图存在时强制右侧，否则优雅降级为左侧
     side = (isEmbeddedBrowserActive && embeddedBrowserView) ? 'right' : 'left';
-  } else if (sidePreferred === 'left' || sidePreferred === 'right') {
+  } else if (sidePreferred === 'left' || sidePreferred === 'right' || sidePreferred === 'third') {
     side = sidePreferred;
+  } else if (isThreeScreenMode && thirdBrowserView) {
+    if (lastTabTargetSide === 'third') side = 'third';
+    else if (isEmbeddedBrowserActive && embeddedBrowserView) {
+      side = (lastTabTargetSide === 'right') ? 'right' : 'left';
+    } else {
+      side = 'left';
+    }
   } else if (isEmbeddedBrowserActive && embeddedBrowserView) {
     if (lastTabTargetSide === 'right') side = 'right';
     else {
@@ -842,8 +871,57 @@ function updateBrowserViewBounds() {
   const availableWidth = bounds.width - sidebarWidth;
   const availableHeight = bounds.height - topBarHeight;
   
+  // 三分屏布局：左（AI）、中（右1/嵌入）、右（第三屏）
+  if (isThreeScreenMode && thirdBrowserView && previousBrowserView) {
+    // 三分屏：为两条分割线预留 gutter（与渲染层 .split-divider 宽度一致）
+    const halfG = Math.floor(DIVIDER_GUTTER / 2);
+    const minWidth = 200;
+    const totalGutters = DIVIDER_GUTTER * 2;
+    const free = Math.max(0, availableWidth - totalGutters);
+    // 从比例计算宽度
+    let leftWidth = Math.max(minWidth, Math.floor(free * (threeSplitR1 || (1/3))));
+    let midWidth = embeddedBrowserView ? Math.max(minWidth, Math.floor(free * (threeSplitR2 || (1/3)))) : 0;
+    let right2Width = Math.max(minWidth, free - leftWidth - midWidth);
+    // 若合计超过 free，回收到右侧
+    const overflow = (leftWidth + midWidth + right2Width) - free;
+    if (overflow > 0) {
+      // 优先减少较大的列
+      let o = overflow;
+      const dec = (amt, cur) => { const d = Math.min(amt, Math.max(0, cur - minWidth)); return [cur - d, amt - d]; };
+      if (leftWidth >= midWidth && leftWidth >= right2Width) { [leftWidth, o] = dec(o, leftWidth); }
+      if (o > 0 && midWidth >= right2Width) { [midWidth, o] = dec(o, midWidth); }
+      if (o > 0) { [right2Width, o] = dec(o, right2Width); }
+    }
+
+    const leftX = sidebarWidth;
+    const midX = sidebarWidth + leftWidth + DIVIDER_GUTTER;
+    const right2X = midX + midWidth + (embeddedBrowserView ? DIVIDER_GUTTER : 0);
+
+    // 左侧视图（AI 聊天）
+    previousBrowserView.setBounds({ x: leftX, y: topBarHeight, width: leftWidth, height: availableHeight });
+    previousBrowserView.setAutoResize({ width: false, height: false });
+
+    // 中间视图（地址栏下方开始）
+    if (embeddedBrowserView) {
+      const midY = Math.max(topBarHeight, addressBarBottom);
+      const midH = availableHeight - (midY - topBarHeight);
+      embeddedBrowserView.setBounds({ x: midX, y: midY, width: midWidth, height: midH });
+      embeddedBrowserView.setAutoResize({ width: false, height: false });
+    }
+
+    // 右侧第三屏（全高）
+    thirdBrowserView.setBounds({ x: right2X, y: topBarHeight, width: right2Width, height: availableHeight });
+    thirdBrowserView.setAutoResize({ width: false, height: false });
+
+    console.log('[Three Split] bounds', {
+      left: { x: leftX, y: topBarHeight, width: leftWidth, height: availableHeight },
+      mid: embeddedBrowserView ? { x: midX, y: Math.max(topBarHeight, addressBarBottom), width: midWidth, height: availableHeight - (Math.max(topBarHeight, addressBarBottom) - topBarHeight) } : null,
+      right2: { x: right2X, y: topBarHeight, width: right2Width, height: availableHeight },
+      gutters: { firstCenter: sidebarWidth + leftWidth + halfG, secondCenter: midX + midWidth + halfG }
+    });
+  
   // 如果内嵌浏览器激活，实现分屏布局
-  if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
+  } else if (isEmbeddedBrowserActive && embeddedBrowserView && previousBrowserView) {
     // 分屏布局：左侧 AI 聊天，右侧内嵌浏览器
     // 使用保存的分屏比例
     const splitPoint = Math.floor(availableWidth * splitRatio);
@@ -1544,7 +1622,7 @@ ipcMain.on('get-full-width-state', (event) => {
 
 // 渲染进程告知当前“强制切换”的目标侧
 ipcMain.on('active-side', (event, side) => {
-  lastTabTargetSide = (side === 'right') ? 'right' : 'left';
+  lastTabTargetSide = (side === 'right') ? 'right' : (side === 'third' ? 'third' : 'left');
 });
 
 // 聚焦右侧内嵌浏览器，便于连续 Tab/Shift+Tab 切换
@@ -1558,6 +1636,63 @@ ipcMain.on('focus-embedded', () => {
   } catch (_) {}
 });
 
+// ============== 第三屏（右2）支持 ==============
+function ensureThirdView(partition = thirdBrowserPartition) {
+  if (thirdBrowserView && thirdBrowserPartition === partition) return;
+  try { thirdBrowserView?.destroy?.(); } catch (_) {}
+  thirdBrowserView = null;
+  thirdBrowserPartition = partition || 'persist:third';
+  thirdBrowserView = new BrowserView({
+    webPreferences: {
+      partition: thirdBrowserPartition,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      enableRemoteModule: false,
+    }
+  });
+  try { thirdBrowserView.webContents.setMaxListeners(0); } catch (_) {}
+  // 监听键盘：Tab/刷新
+  try {
+    thirdBrowserView.webContents.on('before-input-event', (event, input) => {
+      try {
+        if (input && input.type === 'keyDown') {
+          if (input.key === 'Tab' && !input.alt && !input.control && !input.meta) {
+            event.preventDefault();
+            suppressGlobalTab();
+            const dir = input.shift ? -1 : 1;
+            cycleToNextProvider(dir, 'third');
+            return;
+          }
+          const isReload = (((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) || input.key === 'F5');
+          if (isReload) { event.preventDefault(); try { thirdBrowserView.webContents.reload(); } catch (_) {} }
+        }
+      } catch (_) {}
+    });
+  } catch (_) {}
+  // 跟踪焦点
+  try { thirdBrowserView.webContents.on('focus', () => { lastFocusedBrowserView = thirdBrowserView; lastTabTargetSide = 'third'; }); } catch (_) {}
+}
+
+function openThirdScreen(url, opts = {}) {
+  if (!mainWindow) return;
+  try {
+    // 确保左侧与中间存在
+    if (!isEmbeddedBrowserActive || !embeddedBrowserView) {
+      openEmbeddedBrowser('about:blank', { partition: 'persist:embedded-browser' });
+    }
+    // 创建/复用第三屏视图
+    const part = (opts && typeof opts.partition === 'string' && opts.partition.trim()) ? opts.partition.trim() : thirdBrowserPartition;
+    ensureThirdView(part);
+    if (url) {
+      try { thirdBrowserView.webContents.loadURL(url); } catch (_) {}
+    }
+    isThreeScreenMode = true;
+    try { mainWindow.addBrowserView(thirdBrowserView); } catch (_) {}
+    updateBrowserViewBounds();
+  } catch (e) { console.error('openThirdScreen error:', e); }
+}
+
 // 设置顶部预留空间（由渲染进程计算需要的像素）
 ipcMain.on('set-top-inset', (event, px) => {
   try {
@@ -1567,6 +1702,61 @@ ipcMain.on('set-top-inset', (event, px) => {
     if (next !== topInset) {
       topInset = next;
       updateBrowserViewBounds();
+    }
+  } catch (_) {}
+});
+
+// 三分屏开关
+ipcMain.on('set-three-screen-mode', (event, enable) => {
+  try {
+    const next = !!enable;
+    if (isThreeScreenMode !== next) {
+      isThreeScreenMode = next;
+      updateBrowserViewBounds();
+    }
+  } catch (e) { console.warn('set-three-screen-mode error:', e); }
+});
+
+// 设置三分屏比例（r1、r2 为 free 宽度中的占比）
+ipcMain.on('set-three-ratios', (event, payload) => {
+  try {
+    if (!payload) return;
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, Number(v)));
+    const r1 = clamp(payload.r1, 0.05, 0.9);
+    const r2 = clamp(payload.r2, 0.05, 0.9);
+    if (Number.isFinite(r1) && Number.isFinite(r2)) {
+      threeSplitR1 = r1; threeSplitR2 = r2;
+      updateBrowserViewBounds();
+    }
+  } catch (e) { console.warn('set-three-ratios error:', e); }
+});
+
+// IPC：打开第三屏
+ipcMain.on('open-third-screen', (event, payload) => {
+  try {
+    const url = (payload && payload.url) || null;
+    openThirdScreen(url || 'about:blank');
+  } catch (e) { console.error('ipc open-third-screen error:', e); }
+});
+
+// IPC：切换第三屏 provider（使用对应分区，实现登录复用）
+ipcMain.on('switch-third-provider', (event, payload) => {
+  try {
+    const key = payload && payload.key;
+    const url = payload && payload.url;
+    const p = PROVIDERS[key];
+    const part = p && p.partition ? p.partition : 'persist:third';
+    openThirdScreen(url || (p && p.url) || 'about:blank', { partition: part });
+  } catch (e) { console.error('switch-third-provider error:', e); }
+});
+
+// IPC：聚焦第三屏
+ipcMain.on('focus-third', () => {
+  try {
+    if (thirdBrowserView && thirdBrowserView.webContents) {
+      thirdBrowserView.webContents.focus();
+      lastFocusedBrowserView = thirdBrowserView;
+      lastTabTargetSide = 'third';
     }
   } catch (_) {}
 });
@@ -2049,6 +2239,183 @@ async function insertTextIntoCurrentView(text) {
   }
 }
 
+// Read current prompt text from a given view
+async function getPromptTextFromView(view) {
+  if (!view || !view.webContents) return '';
+  try {
+    const text = await view.webContents.executeJavaScript(`
+      (function(){
+        try {
+          function findPromptElement() {
+            const selectors = [
+              'textarea',
+              '.ql-editor',
+              'div[contenteditable="true"]',
+              '[role="textbox"]',
+              '[aria-label*="prompt" i]',
+              '[data-testid*="prompt" i]',
+              '[data-testid*="textbox" i]',
+              'input[name="q"]',
+              'input[type="text"]'
+            ];
+            for (const selector of selectors) {
+              const els = Array.from(document.querySelectorAll(selector));
+              const visible = els.filter(el => {
+                const s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+              });
+              if (visible.length) {
+                visible.sort((a,b)=>b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+                return visible[0];
+              }
+            }
+            return null;
+          }
+          const el = findPromptElement();
+          if (!el) return '';
+          if (el.isContentEditable) {
+            return (el.innerText || el.textContent || '').trim();
+          }
+          if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+            return String(el.value || '').trim();
+          }
+          return '';
+        } catch (_) { return ''; }
+      })();
+    `);
+    return String(text || '').trim();
+  } catch (_) { return ''; }
+}
+
+// Insert text into a specific view
+async function insertTextIntoView(view, text) {
+  if (!view || !view.webContents) return { ok:false, error:'no-view' };
+  if (!text || !String(text).trim()) return { ok:false, error:'empty-text' };
+  try {
+    view.webContents.focus();
+    await new Promise(r=> setTimeout(r, 50));
+    const result = await view.webContents.executeJavaScript(`
+      (function() {
+        try {
+          function findPromptElement() {
+            const selectors = [
+              'textarea',
+              '.ql-editor',
+              'div[contenteditable="true"]',
+              '[role="textbox"]',
+              '[aria-label*="prompt" i]',
+              '[data-testid*="prompt" i]',
+              '[data-testid*="textbox" i]',
+              'input[name="q"]',
+              'input[type="text"]'
+            ];
+            for (const selector of selectors) {
+              const els = Array.from(document.querySelectorAll(selector));
+              const visible = els.filter(el => {
+                const s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null;
+              });
+              if (visible.length) {
+                visible.sort((a,b)=>b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+                return visible[0];
+              }
+            }
+            return null;
+          }
+          function insertTextAtCaret(el, text) {
+            try {
+              if (el.isContentEditable) {
+                const selection = window.getSelection();
+                let range;
+                if (selection.rangeCount > 0) { range = selection.getRangeAt(0); }
+                else { range = document.createRange(); range.selectNodeContents(el); range.collapse(false); }
+                range.deleteContents();
+                const textNode = document.createTextNode(text);
+                range.insertNode(textNode);
+                range.setStartAfter(textNode);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              } else if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+                const start = el.selectionStart || (el.value||'').length;
+                const end = el.selectionEnd || start;
+                const value = el.value || '';
+                el.value = value.substring(0, start) + text + value.substring(end);
+                el.selectionStart = el.selectionEnd = start + text.length;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            } catch (e) { console.error('insertTextAtCaret failed', e); }
+          }
+          const el = findPromptElement();
+          if (!el) return { ok:false, error:'no-input' };
+          try { el.focus(); } catch(_){}
+          insertTextAtCaret(el, ${JSON.stringify(String(text))});
+          return { ok:true };
+        } catch (e) { return { ok:false, error: String(e && e.message || e) }; }
+      })();
+    `);
+    return result && result.ok ? result : { ok:false, error: (result && result.error) || 'unknown' };
+  } catch (e) {
+    return { ok:false, error: String(e) };
+  }
+}
+
+// Click a plausible "send" button inside the page for a given view
+async function submitInView(view) {
+  if (!view || !view.webContents) return { ok:false, error:'no-view' };
+  try {
+    const result = await view.webContents.executeJavaScript(`
+      (function(){
+        try {
+          const candidates = [
+            'button[data-testid="send-button"]:not([disabled])',
+            'button[aria-label*="Send" i]:not([disabled])',
+            'button[type="submit"]:not([disabled])',
+            'button[aria-label*="发送" i]:not([disabled])',
+            'button[aria-label*="send" i]:not([disabled])',
+            'button[aria-label*="Send message" i]:not([disabled])'
+          ];
+          let btn = null;
+          for (const sel of candidates) { try { btn = document.querySelector(sel); } catch (_) { btn = null; } if (btn) break; }
+          if (btn) { try { btn.click(); return { ok:true, method:'button' }; } catch (_) {} }
+
+          // Fallback: press Enter on active element / prompt (for sites like Google Search)
+          function findPromptElement() {
+            const selectors = [
+              'textarea', '.ql-editor', 'div[contenteditable="true"]', '[role="textbox"]',
+              '[aria-label*="prompt" i]', '[data-testid*="prompt" i]', '[data-testid*="textbox" i]',
+              'input[name="q"]', 'input[type="text"]'
+            ];
+            for (const selector of selectors) {
+              const els = Array.from(document.querySelectorAll(selector));
+              const visible = els.filter(el => { const s = window.getComputedStyle(el); return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetParent !== null; });
+              if (visible.length) { visible.sort((a,b)=>b.getBoundingClientRect().top - a.getBoundingClientRect().top); return visible[0]; }
+            }
+            return null;
+          }
+          const el = document.activeElement && document.activeElement !== document.body ? document.activeElement : findPromptElement();
+          if (el) {
+            try {
+              const ev = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+              el.dispatchEvent(ev);
+              const ev2 = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+              el.dispatchEvent(ev2);
+              return { ok:true, method:'enter' };
+            } catch (_) {}
+          }
+
+          return { ok:false, error:'no-send-button' };
+        } catch (e) { return { ok:false, error: String(e && e.message || e) }; }
+      })();
+    `);
+    return result && result.ok ? result : { ok:false, error: (result && result.error) || 'unknown' };
+  } catch (e) {
+    return { ok:false, error: String(e) };
+  }
+}
+
 
 
 // renderer 请求截屏
@@ -2068,6 +2435,21 @@ ipcMain.on('capture-screenshot', async () => {
 ipcMain.on('focus-prompt', async () => {
   const res = await focusPromptInCurrentView();
   try { mainWindow?.webContents.send('focus-prompt-result', res); } catch (_) {}
+});
+
+// Align/Injection IPC handlers
+ipcMain.handle('inject-text', async (event, payload) => {
+  const text = (payload && payload.text) ? String(payload.text) : '';
+  return await insertTextIntoCurrentView(text);
+});
+ipcMain.handle('inject-and-send', async (event, payload) => {
+  const text = (payload && payload.text) ? String(payload.text) : '';
+  const res = await insertTextIntoCurrentView(text);
+  if (res && res.ok) {
+    const v = getActiveAiView();
+    try { await submitInView(v); } catch (_) {}
+  }
+  return res;
 });
 
 
@@ -2293,6 +2675,54 @@ app.whenReady().then(() => {
   });
   if (!gotInsertText) console.error('选中文字插入快捷键注册失败:', insertTextKey);
   else console.log('✓ 选中文字插入快捷键已注册:', insertTextKey);
+
+  // ============== Align: 左侧输入 -> 右侧 AI 并发送 ==============
+  const alignKey = process.platform === 'darwin' ? 'Command+Shift+A' : 'Control+Shift+A';
+  const gotAlign = globalShortcut.register(alignKey, async () => {
+    try {
+      // Ensure window visible
+      if (!isShowing) { showWindow(); await new Promise(r=> setTimeout(r, 200)); }
+
+      const leftView = getLeftAiView();
+      const rightView = getRightAiView();
+      const thirdView = (isThreeScreenMode && thirdBrowserView) ? thirdBrowserView : null;
+      if (!leftView) { console.warn('[Align] No left view'); return; }
+
+      // Read text from left prompt
+      const text = await getPromptTextFromView(leftView);
+      if (!text || !text.trim()) {
+        console.warn('[Align] No prompt text detected on the left');
+        return;
+      }
+
+      // First, send on the left as well
+      try { await submitInView(leftView); } catch (_) {}
+
+      // Inject into right and send (if available)
+      if (rightView) {
+        const ins = await insertTextIntoView(rightView, text);
+        if (ins && ins.ok) { try { await submitInView(rightView); } catch (_) {} }
+        else { console.warn('[Align] Failed to inject into right:', ins && ins.error); }
+      }
+
+      // Inject into third and send (if available)
+      if (thirdView) {
+        const ins3 = await insertTextIntoView(thirdView, text);
+        if (ins3 && ins3.ok) { try { await submitInView(thirdView); } catch (_) {} }
+        else { console.warn('[Align] Failed to inject into third:', ins3 && ins3.error); }
+      }
+
+      // Focus右或第三，优先第三
+      try {
+        if (thirdView) { thirdView.webContents.focus(); lastFocusedBrowserView = thirdView; }
+        else if (rightView) { rightView.webContents.focus(); lastFocusedBrowserView = rightView; }
+      } catch (_) {}
+    } catch (e) {
+      console.error('Align (Cmd+Shift+A) failed:', e);
+    }
+  });
+  if (!gotAlign) console.error('Align 快捷键注册失败:', alignKey);
+  else console.log('✓ Align 快捷键已注册:', alignKey);
   
   // 首次启动时显示窗口并加载默认 provider
   setTimeout(() => {

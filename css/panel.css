@@ -26,11 +26,13 @@
   --shadow-light: rgba(15, 23, 42, 0.08);
   --shadow-medium: rgba(15, 23, 42, 0.18);
   
-  /* 侧向高亮颜色（左=蓝，右=紫） */
+  /* 侧向高亮颜色（左=蓝，右=紫，第三屏=荧光色） */
   --ring-left: #4285f4; /* Google Blue */
   --ring-left-glow: rgba(66, 133, 244, 0.35);
   --ring-right: #a855f7; /* Violet-500 */
   --ring-right-glow: rgba(168, 85, 247, 0.35);
+  --ring-third: #00ff88; /* 荧光绿色 */
+  --ring-third-glow: rgba(0, 255, 136, 0.45);
   
   /* 通用尺寸 */
   --border-radius: 12px;
@@ -473,6 +475,14 @@ html {
   box-shadow: 0 4px 14px var(--btn-blue-shadow);
 }
 
+/* Align button - active state */
+.toolbar button#alignBtn.active {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: #047857;
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
 /* History dropdown panel */
 .history-panel {
   position: absolute;
@@ -736,6 +746,79 @@ html {
   animation: fadeIn 0.5s ease-out forwards;
 }
 
+/* 第三屏容器样式 */
+#thirdScreen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 33.33%; /* 三分屏时占1/3宽度 */
+  border: none;
+  border-radius: 0;
+  background-color: #ffffff;
+  overflow: hidden;
+  transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+  opacity: 0;
+  transform: translateY(30px);
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+/* 三分屏模式下的布局调整 */
+body.three-screen-mode #iframe {
+  width: 33.33%; /* 主屏占1/3 */
+  left: 0;
+}
+
+body.three-screen-mode #splitDivider {
+  left: 33.33%; /* 第一条分割线在1/3处 */
+}
+
+body.three-screen-mode #thirdDivider {
+  left: 66.66%; /* 第二条分割线在2/3处 */
+}
+
+/* 确保第三屏分割线样式与主分割线一致 */
+#thirdDivider {
+  position: fixed;
+  top: var(--divider-top, 56px);
+  bottom: 0;
+  width: 24px;
+  z-index: 2147483647;
+  pointer-events: auto;
+  cursor: col-resize;
+  left: 0;
+  transform: translateX(-50%);
+  transition: left 0.1s ease;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
+#thirdDivider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 4px;
+  transform: translateX(-50%);
+  background: var(--divider-color);
+  box-shadow: 0 0 0 1px var(--divider-color);
+  pointer-events: none;
+}
+
+#thirdDivider:hover::before {
+  background: var(--divider-color-hover);
+  width: 6px;
+  box-shadow: 0 0 0 1px var(--divider-color-hover);
+}
+
+#thirdDivider.dragging::before {
+  background: var(--divider-color-hover);
+  width: 6px;
+  box-shadow: 0 0 0 2px var(--divider-color-hover);
+}
+
 /* 在 Electron BrowserView 模式下，#iframe 只是一个占位容器，实际内容在 BrowserView 中 */
 /* 确保实际嵌入的 iframe/webview 也完全铺满（兼容非 Electron 环境） */
 #iframe iframe,
@@ -867,9 +950,20 @@ html {
   box-shadow: 0 0 0 2px var(--ring-right), 0 0 10px var(--ring-right-glow);
 }
 
-/* 如果左右正好是同一个 Provider，以紫色为主 */
+/* 单独为第三屏 Provider 添加荧光色光圈 */
+#provider-tabs button.third-active { 
+  box-shadow: 0 0 0 2px var(--ring-third), 0 0 10px var(--ring-third-glow);
+}
+
+/* 优先级：第三屏 > 右屏 > 左屏 */
 #provider-tabs button.active.right-active {
   box-shadow: 0 0 0 2px var(--ring-right), 0 0 10px var(--ring-right-glow);
+}
+
+#provider-tabs button.active.third-active,
+#provider-tabs button.right-active.third-active,
+#provider-tabs button.active.right-active.third-active {
+  box-shadow: 0 0 0 2px var(--ring-third), 0 0 10px var(--ring-third-glow);
 }
 
 /* 保留容器类但不改变 active 样式，避免误导 */
@@ -968,6 +1062,129 @@ html {
   align-items: center;
   justify-content: center;
   z-index: 100010;
+}
+
+/* Align Modal */
+.align-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100010;
+}
+
+.align-message-input {
+  margin-bottom: 20px;
+}
+
+.align-message-input label {
+  display: block;
+  font-weight: 500;
+  color: #334155;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.align-message-input textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.align-message-input textarea:focus {
+  outline: none;
+  border-color: var(--btn-blue-start);
+  box-shadow: 0 0 0 3px rgba(90, 132, 255, 0.1);
+}
+
+.align-providers {
+  margin-bottom: 20px;
+}
+
+.align-providers > label {
+  display: block;
+  font-weight: 500;
+  color: #334155;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.providers-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.provider-checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.provider-checkbox label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+  width: 100%;
+}
+
+.provider-checkbox label:hover {
+  background: #e2e8f0;
+}
+
+.provider-checkbox input[type="checkbox"] {
+  margin-right: 8px;
+  width: 16px;
+  height: 16px;
+}
+
+.provider-name {
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.align-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.align-send-btn {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border: 1px solid #047857;
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.align-send-btn:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+.align-send-btn:active {
+  transform: translateY(1px);
 }
 
 .settings-modal-backdrop {

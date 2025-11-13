@@ -302,7 +302,9 @@ const defaultButtonShortcuts = {
   openInTab: { key: 'o', ctrl: true, shift: false, alt: false },
   searchBtn: { key: 'f', ctrl: true, shift: true, alt: false },
   historyBtn: { key: 'h', ctrl: true, shift: false, alt: false },
-  favoritesBtn: { key: 'l', ctrl: true, shift: false, alt: false }
+  favoritesBtn: { key: 'l', ctrl: true, shift: false, alt: false },
+  // Align: default to Cmd+Shift+A on macOS (no Ctrl)
+  alignBtn: { key: 'a', ctrl: false, shift: true, alt: false, meta: true }
 };
 
 const getButtonShortcuts = async () => {
@@ -342,29 +344,80 @@ const currentTitleByProvider = {}; // { [providerKey]: string }
 // Right-side (embedded browser) current state
 let __rightCurrentProvider = null; // providerKey currently on right side
 let __rightCurrentUrl = null;      // current URL on right side
-let __activeSide = 'left';         // 'left' | 'right' (for UI highlight)
+// Third screen state
+let __thirdCurrentProvider = null; // providerKey currently on third screen
+let __thirdCurrentUrl = null;      // current URL on third screen
+let __activeSide = 'left';         // 'left' | 'right' | 'third' (for UI highlight)
+let __threeScreenMode = false;    // 是否处于三分屏模式
+
+// 切换三分屏模式
+function toggleThreeScreenMode(enable) {
+  try {
+    __threeScreenMode = enable;
+    const body = document.body;
+    const thirdScreen = document.getElementById('thirdScreen');
+    const thirdDivider = document.getElementById('thirdDivider');
+    
+    if (enable) {
+      body.classList.add('three-screen-mode');
+      if (thirdScreen) thirdScreen.style.display = 'block';
+      if (thirdDivider) thirdDivider.style.display = 'block';
+      console.log('[Three Screen Mode] Enabled');
+    } else {
+      body.classList.remove('three-screen-mode');
+      if (thirdScreen) thirdScreen.style.display = 'none';
+      if (thirdDivider) thirdDivider.style.display = 'none';
+      // 清除第三屏状态
+      __thirdCurrentProvider = null;
+      __thirdCurrentUrl = null;
+      // 如果当前激活的是第三屏，切换回左屏
+      if (__activeSide === 'third') {
+        setActiveSide('left');
+      }
+      console.log('[Three Screen Mode] Disabled');
+    }
+    
+    // 通知主进程三分屏模式状态变化
+    if (IS_ELECTRON && window.electronAPI?.setThreeScreenMode) {
+      window.electronAPI.setThreeScreenMode(enable);
+      if (enable && window.electronAPI?.setThreeSplitRatios) {
+        try {
+          const r1 = parseFloat(localStorage.getItem('threeSplitR1') || '0.3333');
+          const r2 = parseFloat(localStorage.getItem('threeSplitR2') || '0.3333');
+          const safeR1 = isFinite(r1) ? r1 : 1/3;
+          const safeR2 = isFinite(r2) ? r2 : 1/3;
+          window.electronAPI.setThreeSplitRatios(safeR1, safeR2);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
 
 function setActiveSide(side) {
   try {
-    __activeSide = (side === 'right') ? 'right' : 'left';
+    __activeSide = (side === 'third') ? 'third' : (side === 'right') ? 'right' : 'left';
     const tabs = document.getElementById('provider-tabs');
     if (tabs) {
+      tabs.classList.remove('side-left', 'side-right', 'side-third');
       if (__activeSide === 'right') {
         tabs.classList.add('side-right');
-        tabs.classList.remove('side-left');
+      } else if (__activeSide === 'third') {
+        tabs.classList.add('side-third');
       } else {
         tabs.classList.add('side-left');
-        tabs.classList.remove('side-right');
       }
     }
 
-    // 轻量同步：只切换样式与高亮，不整列表重渲（避免图标“跳动”）
+    // 轻量同步：只切换样式与高亮，不整列表重渲（避免图标"跳动"）
     try {
-      if (__activeSide === 'right') {
+      if (__activeSide === 'third') {
+        const k = __thirdCurrentProvider || guessProviderKeyByUrl(__thirdCurrentUrl);
+        if (k) highlightProviderOnTabs(k, 'third');
+      } else if (__activeSide === 'right') {
         const k = __rightCurrentProvider || guessProviderKeyByUrl(__rightCurrentUrl);
-        if (k) highlightProviderOnTabs(k);
+        if (k) highlightProviderOnTabs(k, 'right');
       } else {
-        getProvider().then((k)=>{ if (k) highlightProviderOnTabs(k); });
+        getProvider().then((k)=>{ if (k) highlightProviderOnTabs(k, 'left'); });
       }
     } catch (_) {}
 
@@ -1397,8 +1450,8 @@ const renderProviderTabs = async (currentProviderKey) => {
 
     const button = document.createElement('button');
     button.dataset.providerId = key;
-    // 添加Cmd+点击提示到悬停文本
-    button.title = `${cfg.label}\n\n💡 提示：按住 Cmd 键点击可在右侧分屏打开`; // 悬停提示
+    // 悬停提示：Cmd+点击 = 右侧分屏；Cmd+Shift+点击 = 第三屏
+    button.title = `${cfg.label}\n\n💡 提示：\n- Cmd+点击：右侧分屏\n- Cmd+Shift+点击：开启第三屏`;
     button.className = key === currentProviderKey ? 'active' : '';
     if (__rightCurrentProvider === key) button.classList.add('right-active');
     button.draggable = !collapsed;
@@ -1426,13 +1479,35 @@ const renderProviderTabs = async (currentProviderKey) => {
       button.appendChild(fallback);
     }
 
+    // 取消双击触发第三屏，改为 Cmd+Shift+点击
+
     // 点击切换提供商
     button.addEventListener('click', async (event) => {
       const container = document.getElementById('iframe');
       const openInTab = document.getElementById('openInTab');
       
-      // 检测是否按下了Cmd键（Mac）或Ctrl键（Windows/Linux）
+      // 检测是否按下了Cmd/Ctrl 与 Shift
       const isCommandClick = event.metaKey || event.ctrlKey;
+      const isThirdClick = isCommandClick && event.shiftKey;
+      
+      if (isThirdClick) {
+        // Cmd+Shift+点击：第三屏
+        console.log('[Third Screen] Cmd+Shift+Click detected for provider:', key);
+        if (!__threeScreenMode) toggleThreeScreenMode(true);
+        setActiveSide('third');
+        if (IS_ELECTRON && window.electronAPI?.openThirdScreen) {
+          const p = effectiveConfig(ALL, key, overrides);
+          const url = (currentUrlByProvider && currentUrlByProvider[key]) || p.iframeUrl || p.baseUrl;
+          if (__thirdCurrentProvider === key) {
+            try { window.electronAPI?.focusThirdScreen?.(); } catch (_) {}
+          } else {
+            window.electronAPI.openThirdScreen(url);
+            __thirdCurrentProvider = key; __thirdCurrentUrl = url;
+          }
+          highlightProviderOnTabs(key, 'third');
+        }
+        return; // 已处理
+      }
       
       if (isCommandClick) {
         // Cmd+点击：触发分屏功能
@@ -1545,20 +1620,29 @@ const renderProviderTabs = async (currentProviderKey) => {
       await moveKeyToIndex(providerOrder, __dragKey, insertIdx);
       __dragKey = null;
     });
-  });
 
+    tabsContainer.appendChild(button);
+  });
   // 展开时：使用 sticky 置顶（CSS 负责），不覆盖第一个图标
 };
 
-// 仅更新左栏中“右侧激活”的紫色光圈，不重建 DOM
-function highlightProviderOnTabs(providerKey) {
+// 仅更新左栏中"右侧激活"的紫色光圈和"第三屏激活"的荧光色光圈，不重建 DOM
+function highlightProviderOnTabs(providerKey, side = 'right') {
   try {
     const tabs = document.getElementById('provider-tabs');
     if (!tabs) return;
     const btns = tabs.querySelectorAll('button[data-provider-id]');
     btns.forEach((b) => {
-      if (providerKey && b.dataset.providerId === providerKey) b.classList.add('right-active');
-      else b.classList.remove('right-active');
+      if (side === 'third') {
+        if (providerKey && b.dataset.providerId === providerKey) b.classList.add('third-active');
+        else b.classList.remove('third-active');
+      } else if (side === 'right') {
+        if (providerKey && b.dataset.providerId === providerKey) b.classList.add('right-active');
+        else b.classList.remove('right-active');
+      } else {
+        // 清除所有非左侧的激活状态
+        b.classList.remove('right-active', 'third-active');
+      }
     });
   } catch (_) {}
 }
@@ -1641,17 +1725,52 @@ const initializeBar = async () => {
         try {
           const toolbar = document.querySelector('.toolbar');
           const rect = toolbar ? toolbar.getBoundingClientRect() : { top: 0, height: 48 };
-          // 在工具栏下方留 8px 透气
+          // 仅用于 BrowserView 顶部边界（左侧 AI 视图从工具栏下边开始）
           const inset = Math.round((rect.top || 0) + (rect.height || 48) + 8);
-          document.documentElement.style.setProperty('--divider-top', inset + 'px');
+
+          // 分割线需要避开“地址栏”区域，否则会遮挡输入
+          const addressBarEl = document.getElementById('addressBar');
+          let dividerTop = inset;
+          if (addressBarEl && addressBarEl.style.display !== 'none') {
+            const barRect = addressBarEl.getBoundingClientRect();
+            // 地址栏底部再留 4px 呼吸空间
+            const barBottomWithGap = Math.round((barRect.top || 0) + (barRect.height || 36) + 4);
+            dividerTop = Math.max(dividerTop, barBottomWithGap);
+          }
+
+          // 仅将 dividerTop 写入 CSS 变量，避免改变左侧 BrowserView 的顶部边界
+          document.documentElement.style.setProperty('--divider-top', dividerTop + 'px');
+
+          // 将 toolbar inset 告知主进程用于布局（不要包含地址栏高度）
           if (window.electronAPI?.setTopInset) window.electronAPI.setTopInset(inset);
         } catch (_) {}
       };
       // 初始化与窗口变化时都更新一次
       applyTopInset();
-      window.addEventListener('resize', applyTopInset);
+      window.addEventListener('resize', () => {
+        applyTopInset();
+        if (__threeScreenMode) {
+          try {
+            const thirdDividerEl = document.getElementById('thirdDivider');
+            if (thirdDividerEl && splitDivider && splitDivider.style.display !== 'none') {
+              // 仅在三分屏打开时更新两条分隔线位置
+              const providerTabs = document.getElementById('provider-tabs');
+              const sidebarWidth = (providerTabs && (providerTabs.offsetWidth || 60)) || 60;
+              const gutter = 24; const halfG = 12;
+              const availableWidth = window.innerWidth - sidebarWidth;
+              const free = Math.max(0, availableWidth - gutter * 2);
+              const col = Math.floor(free / 3);
+              const x1 = sidebarWidth + col + halfG;
+              const x2 = sidebarWidth + col + gutter + col + halfG;
+              splitDivider.style.left = `${x1}px`;
+              thirdDividerEl.style.left = `${x2}px`;
+              updateAddressBarPosition();
+            }
+          } catch (_) {}
+        }
+      });
 
-      // 更新分割线位置的函数
+      // 更新分割线位置（两屏模式，按比例）
       const updateDividerPositionFromRatio = (ratio) => {
         if (!splitDivider) return;
         // 左侧导航栏固定显示，宽度为 60
@@ -1661,6 +1780,48 @@ const initializeBar = async () => {
         const splitPoint = availableWidth * ratio;
         // 确保分隔线位置精确对齐
         splitDivider.style.left = `${sidebarWidth + splitPoint}px`;
+      };
+
+      // 三分屏：定位两条分割线到等分位置（并为地址栏计算右边界）
+      const updateDividerPositionsForThree = () => {
+        const thirdDivider = document.getElementById('thirdDivider');
+        if (!splitDivider || !thirdDivider) return;
+        const providerTabs = document.getElementById('provider-tabs');
+        const sidebarWidth = (providerTabs && (providerTabs.offsetWidth || 60)) || 60;
+        const gutter = 24; const halfG = 12; const minW = 200;
+        const availableWidth = window.innerWidth - sidebarWidth;
+        const free = Math.max(0, availableWidth - gutter * 2);
+        let r1 = 1/3, r2 = 1/3;
+        try {
+          const s1 = parseFloat(localStorage.getItem('threeSplitR1'));
+          const s2 = parseFloat(localStorage.getItem('threeSplitR2'));
+          if (!Number.isNaN(s1)) r1 = s1; if (!Number.isNaN(s2)) r2 = s2;
+        } catch (_) {}
+        // clamp to ensure minW
+        const clampByMin = (w) => Math.max(minW, Math.floor(w));
+        let leftW = clampByMin(free * r1);
+        let midW = clampByMin(free * r2);
+        let rightW = Math.max(minW, free - leftW - midW);
+        // If overflow, re-balance
+        const overflow = leftW + midW + rightW - free;
+        if (overflow > 0) {
+          const reduce = (want, cur) => { const d = Math.min(want, Math.max(0, cur - minW)); return [cur - d, want - d]; };
+          let o = overflow; [leftW, o] = reduce(o, leftW); if (o>0) [midW, o] = reduce(o, midW); if (o>0) [rightW, o] = reduce(o, rightW);
+        }
+        const x1 = sidebarWidth + leftW + halfG;                   // 第一条分割线中心
+        const x2 = sidebarWidth + leftW + gutter + midW + halfG;   // 第二条分割线中心
+        splitDivider.style.left = `${x1}px`;
+        thirdDivider.style.left = `${x2}px`;
+
+        // 同步地址栏水平范围：限制在中间列内
+        try {
+          const addressBar = document.getElementById('addressBar');
+          if (addressBar && addressBar.style.display !== 'none') {
+            addressBar.style.left = `${x1 + 4}px`;
+            const rightPx = Math.max(8, Math.floor(window.innerWidth - x2 + 8));
+            addressBar.style.right = `${rightPx}px`;
+          }
+        } catch (_) {}
       };
       
       // 地址栏相关元素
@@ -1676,6 +1837,10 @@ const initializeBar = async () => {
         addressGo?.addEventListener('click', () => setActiveSide('right'));
         const splitDividerEl = document.getElementById('splitDivider');
         splitDividerEl?.addEventListener('mousedown', () => setActiveSide('right'));
+        const thirdDividerEl = document.getElementById('thirdDivider');
+        thirdDividerEl && (thirdDividerEl.style.pointerEvents = 'auto');
+        thirdDividerEl && (thirdDividerEl.style.zIndex = '2147483647');
+        thirdDividerEl?.addEventListener('mousedown', () => setActiveSide('third'));
       } catch (_) {}
       
       // 判断输入是否为URL
@@ -1725,18 +1890,30 @@ const initializeBar = async () => {
       // 更新地址栏位置（使其位于右侧内容区域）
       const updateAddressBarPosition = () => {
         if (!addressBar || !splitDivider || splitDivider.style.display === 'none') return;
-        
         try {
           const dividerLeft = parseFloat(splitDivider.style.left) || 0;
-          // 地址栏从分隔线右侧开始，到窗口右边缘
-          addressBar.style.left = `${dividerLeft + 4}px`; // 分隔线宽度约4px
-          addressBar.style.right = '8px';
+          // 默认两屏：从分隔线右侧到窗口右缘
+          let leftPx = dividerLeft + 4;
+          let rightPx = 8;
+          // 三分屏：限制在中间列内（右侧以第二条分割线为界）
+          if (__threeScreenMode) {
+            const thirdDivider = document.getElementById('thirdDivider');
+            const thirdLeft = thirdDivider ? (parseFloat(thirdDivider.style.left) || thirdDivider.getBoundingClientRect().left || 0) : 0;
+            rightPx = Math.max(8, Math.floor(window.innerWidth - thirdLeft + 8));
+          }
+          addressBar.style.left = `${leftPx}px`;
+          addressBar.style.right = `${rightPx}px`;
         } catch (_) {}
       };
       
       // 显示/隐藏返回按钮和分屏指示器
       const showBackButton = () => {
         backBtn.style.display = 'inline-flex';
+        // 同时显示align按钮
+        const alignBtn = document.getElementById('alignBtn');
+        if (alignBtn) {
+          alignBtn.style.display = 'inline-flex';
+        }
         if (splitDivider) {
           splitDivider.style.display = 'block';
           // 确保分割线顶部与工具栏对齐
@@ -1744,17 +1921,23 @@ const initializeBar = async () => {
           // 确保分隔线可以接收事件
           splitDivider.style.pointerEvents = 'auto';
           splitDivider.style.zIndex = '2147483647';
-          // 立即更新分割线位置，确保与分屏比例同步
+          // 立即更新分割线位置，确保与布局同步
           setTimeout(() => {
             try {
-              const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
-              updateDividerPositionFromRatio(savedRatio);
-              // 通知主进程同步分屏比例
-              if (window.electronAPI?.setSplitRatio) {
-                window.electronAPI.setSplitRatio(savedRatio);
+              if (__threeScreenMode) {
+                updateDividerPositionsForThree();
+              } else {
+                const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+                updateDividerPositionFromRatio(savedRatio);
+                // 通知主进程同步分屏比例
+                if (window.electronAPI?.setSplitRatio) {
+                  window.electronAPI.setSplitRatio(savedRatio);
+                }
               }
               // 更新地址栏位置
               updateAddressBarPosition();
+              // 再次刷新 divider 顶部，确保避开已显示的地址栏
+              applyTopInset();
             } catch (_) {}
           }, 50);
         }
@@ -1769,6 +1952,11 @@ const initializeBar = async () => {
       };
       const hideBackButton = () => {
         backBtn.style.display = 'none';
+        // 同时隐藏align按钮
+        const alignBtn = document.getElementById('alignBtn');
+        if (alignBtn) {
+          alignBtn.style.display = 'none';
+        }
         if (splitDivider) {
           splitDivider.style.display = 'none';
         }
@@ -1776,6 +1964,8 @@ const initializeBar = async () => {
         if (addressBar) {
           addressBar.style.display = 'none';
         }
+        // 恢复 divider 顶部到仅工具栏高度
+        applyTopInset();
       };
       
       // 监听内嵌浏览器事件
@@ -1895,6 +2085,14 @@ const initializeBar = async () => {
         }
       });
       
+      // Align按钮点击事件
+      const alignBtn = document.getElementById('alignBtn');
+      if (alignBtn) {
+        alignBtn.addEventListener('click', () => {
+          showAlignModal();
+        });
+      }
+      
       // Esc 键关闭内嵌浏览器
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && backBtn.style.display !== 'none') {
@@ -1910,6 +2108,9 @@ const initializeBar = async () => {
         let isDragging = false;
         let startX = 0;
         let startLeft = 0;
+        // 三分屏拖动
+        let isDraggingThree = false;
+        let dragTarget = null; // 'left' | 'right'
         
         // 确保分隔线可以接收事件
         splitDivider.style.pointerEvents = 'auto';
@@ -1949,10 +2150,15 @@ const initializeBar = async () => {
           return Math.max(0.2, Math.min(0.8, relativeX / availableWidth));
         };
         
-        // 鼠标按下
+        // 鼠标按下：左侧分割线
         splitDivider.addEventListener('mousedown', (e) => {
           console.log('[Split Divider] mousedown event triggered', e);
-          isDragging = true;
+          if (__threeScreenMode) {
+            // 三分屏：拖动左侧竖线
+            isDraggingThree = true; dragTarget = 'left';
+          } else {
+            isDragging = true;
+          }
           startX = e.clientX;
           const currentLeft = parseFloat(splitDivider.style.left);
           const currentSidebarWidth = getSidebarWidth();
@@ -1963,53 +2169,101 @@ const initializeBar = async () => {
           // 确保分隔线在最上层
           splitDivider.style.zIndex = '2147483647';
         });
+
+        // 鼠标按下：第二条分割线（第三屏）
+        try {
+          const thirdDivider = document.getElementById('thirdDivider');
+          if (thirdDivider) {
+            thirdDivider.addEventListener('mousedown', (e) => {
+              if (!__threeScreenMode) return; // 二分屏不处理
+              isDraggingThree = true; dragTarget = 'right';
+              startX = e.clientX;
+              const cur = parseFloat(thirdDivider.style.left);
+              startLeft = isFinite(cur) ? cur : (thirdDivider.getBoundingClientRect().left || 0);
+              thirdDivider.classList.add('dragging');
+              e.preventDefault(); e.stopPropagation();
+              thirdDivider.style.zIndex = '2147483647';
+            });
+          }
+        } catch (_) {}
         
         // 鼠标移动
         const handleMouseMove = (e) => {
-          if (!isDragging) return;
+          if (!isDragging && !isDraggingThree) return;
           
           const currentSidebarWidth = getSidebarWidth();
           const deltaX = e.clientX - startX;
           const newLeft = startLeft + deltaX;
           
-          // 限制在有效范围内
           const availableWidth = window.innerWidth - currentSidebarWidth;
-          const minLeft = currentSidebarWidth + availableWidth * 0.2;
-          const maxLeft = currentSidebarWidth + availableWidth * 0.8;
-          const clampedLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
-          
-          const ratio = calculateRatioFromPosition(clampedLeft);
-          
-          // 更新分割线位置
-          splitDivider.style.left = `${clampedLeft}px`;
-          splitDivider.style.transition = 'none'; // 拖动时禁用过渡
-          
-          // 更新地址栏位置
-          updateAddressBarPosition();
-          
-          // 通知主进程更新分屏比例
-          if (window.electronAPI?.setSplitRatio) {
-            window.electronAPI.setSplitRatio(ratio);
+
+          if (!isDraggingThree) {
+            // 二分屏逻辑
+            const minLeft = currentSidebarWidth + availableWidth * 0.2;
+            const maxLeft = currentSidebarWidth + availableWidth * 0.8;
+            const clampedLeft = Math.max(minLeft, Math.min(maxLeft, newLeft));
+            const ratio = calculateRatioFromPosition(clampedLeft);
+            splitDivider.style.left = `${clampedLeft}px`;
+            splitDivider.style.transition = 'none';
+            updateAddressBarPosition();
+            if (window.electronAPI?.setSplitRatio) window.electronAPI.setSplitRatio(ratio);
+            return;
           }
+
+          // 三分屏拖动（两条线之一）
+          const gutter = 24, halfG = 12;
+          const free = Math.max(0, availableWidth - gutter * 2);
+          const minW = 200;
+
+          const thirdDivider = document.getElementById('thirdDivider');
+          const x1 = parseFloat(splitDivider.style.left) || (currentSidebarWidth + Math.floor(free/3) + halfG);
+          const x2 = thirdDivider ? (parseFloat(thirdDivider.style.left) || (currentSidebarWidth + Math.floor(free/3) + gutter + Math.floor(free/3) + halfG)) : 0;
+
+          if (dragTarget === 'left') {
+            // 左线移动：限制左列与中列的最小宽度
+            const minX = currentSidebarWidth + minW + halfG;
+            const maxX = x2 - (gutter + minW + halfG);
+            const nx1 = Math.max(minX, Math.min(maxX, newLeft));
+            splitDivider.style.left = `${nx1}px`;
+            splitDivider.style.transition = 'none';
+          } else if (dragTarget === 'right' && thirdDivider) {
+            const minX = x1 + (gutter + minW + halfG);
+            const maxX = currentSidebarWidth + availableWidth - (minW + halfG);
+            const nx2 = Math.max(minX, Math.min(maxX, newLeft));
+            thirdDivider.style.left = `${nx2}px`;
+            thirdDivider.style.transition = 'none';
+          }
+
+          // 计算 r1/r2 并同步主进程
+          const nx1 = parseFloat(splitDivider.style.left) || x1;
+          const nx2 = thirdDivider ? (parseFloat(thirdDivider.style.left) || x2) : x2;
+          const w1 = (nx1 - halfG) - currentSidebarWidth;
+          const w2 = Math.max(0, nx2 - nx1 - gutter);
+          const rf = free > 0 ? free : 1;
+          const r1 = Math.max(0.05, Math.min(0.9, w1 / rf));
+          const r2 = Math.max(0.05, Math.min(0.9, w2 / rf));
+          if (window.electronAPI?.setThreeSplitRatios) window.electronAPI.setThreeSplitRatios(r1, r2);
+          try { localStorage.setItem('threeSplitR1', String(r1)); localStorage.setItem('threeSplitR2', String(r2)); } catch (_) {}
+          updateAddressBarPosition();
         };
         
         document.addEventListener('mousemove', handleMouseMove);
         
         // 鼠标释放
         const handleMouseUp = () => {
-          if (isDragging) {
-            isDragging = false;
+          if (isDragging || isDraggingThree) {
+            isDragging = false; isDraggingThree = false; dragTarget = null;
             splitDivider.classList.remove('dragging');
-            splitDivider.style.transition = ''; // 恢复过渡效果
-            
-            // 保存分屏比例到本地存储
-            try {
-              const currentLeft = parseFloat(splitDivider.style.left);
-              const ratio = calculateRatioFromPosition(currentLeft);
-              localStorage.setItem('splitRatio', ratio.toString());
-              console.log('[Split Divider] Saved ratio:', ratio);
-            } catch (e) {
-              console.error('[Split Divider] Error saving ratio:', e);
+            splitDivider.style.transition = '';
+            try { document.getElementById('thirdDivider')?.classList.remove('dragging'); } catch (_) {}
+
+            if (!__threeScreenMode) {
+              try {
+                const currentLeft = parseFloat(splitDivider.style.left);
+                const ratio = calculateRatioFromPosition(currentLeft);
+                localStorage.setItem('splitRatio', ratio.toString());
+                console.log('[Split Divider] Saved ratio:', ratio);
+              } catch (e) { console.error('[Split Divider] Error saving ratio:', e); }
             }
           }
         };
@@ -2065,17 +2319,27 @@ const initializeBar = async () => {
             attributeFilter: ['style']
           });
         }
+
+        // 第二条分割线点击即激活第三屏
+        try {
+          const thirdDivider = document.getElementById('thirdDivider');
+          thirdDivider?.addEventListener('mousedown', () => setActiveSide('third'));
+        } catch (_) {}
         
         // 内嵌浏览器打开时，恢复保存的分屏比例
         window.electronAPI.onEmbeddedBrowserOpened?.(() => {
           setTimeout(() => {
             try {
-              const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
-              updateDividerPosition(savedRatio);
-              if (window.electronAPI?.setSplitRatio) {
-                window.electronAPI.setSplitRatio(savedRatio);
+              if (__threeScreenMode) {
+                updateDividerPositionsForThree();
+              } else {
+                const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+                updateDividerPosition(savedRatio);
+                if (window.electronAPI?.setSplitRatio) {
+                  window.electronAPI.setSplitRatio(savedRatio);
+                }
+                console.log('[Split Divider] Restored ratio on open:', savedRatio);
               }
-              console.log('[Split Divider] Restored ratio on open:', savedRatio);
             } catch (e) {
               console.error('[Split Divider] Error restoring ratio:', e);
             }
@@ -2128,11 +2392,17 @@ const initializeBar = async () => {
       const setDividerOverlayState = (on) => {
         try {
           const splitDivider = document.getElementById('splitDivider');
-          if (!splitDivider) return;
-          // 在 overlay 期间完全禁用交互并视觉隐藏（不改变 display，避免布局抖动）
-          splitDivider.style.pointerEvents = on ? 'none' : 'auto';
-          splitDivider.style.opacity = on ? '0' : '';
-          splitDivider.style.zIndex = on ? '1' : '2147483647';
+          const thirdDivider = document.getElementById('thirdDivider');
+          if (splitDivider) {
+            splitDivider.style.pointerEvents = on ? 'none' : 'auto';
+            splitDivider.style.opacity = on ? '0' : '';
+            splitDivider.style.zIndex = on ? '1' : '2147483647';
+          }
+          if (thirdDivider) {
+            thirdDivider.style.pointerEvents = on ? 'none' : 'auto';
+            thirdDivider.style.opacity = on ? '0' : '';
+            thirdDivider.style.zIndex = on ? '1' : '2147483647';
+          }
         } catch (_) {}
       };
       window.electronAPI.onOverlayState((payload)=>{
@@ -2400,13 +2670,14 @@ const initializeBar = async () => {
         const starShortcut = await getStarShortcut();
         const buttonShortcuts = await getButtonShortcuts();
         
-        const formatKey = (shortcut) => `${shortcut.ctrl ? 'Ctrl+' : ''}${shortcut.alt ? 'Alt+' : ''}${shortcut.shift ? 'Shift+' : ''}${shortcut.key.toUpperCase()}`;
+        const formatKey = (shortcut) => `${shortcut.meta ? 'Cmd+' : ''}${shortcut.ctrl ? 'Ctrl+' : ''}${shortcut.alt ? 'Alt+' : ''}${shortcut.shift ? 'Shift+' : ''}${shortcut.key.toUpperCase()}`;
         
         const shortcutRows = [
           { id: 'openInTab', label: 'Open in Tab', shortcut: buttonShortcuts.openInTab },
           { id: 'searchBtn', label: 'Search', shortcut: buttonShortcuts.searchBtn },
           { id: 'historyBtn', label: 'History', shortcut: buttonShortcuts.historyBtn },
           { id: 'favoritesBtn', label: 'Starred', shortcut: buttonShortcuts.favoritesBtn },
+          { id: 'alignBtn', label: 'Align (Multi-AI)', shortcut: buttonShortcuts.alignBtn },
           { id: 'star', label: 'Star Current Page', shortcut: starShortcut }
         ].map(item => `
           <div class="shortcut-row">
@@ -2608,6 +2879,45 @@ const initializeBar = async () => {
   };
   try { window.__AIPanelCycleProviderRight = cycleProviderRight; } catch (_) {}
 
+  // Helper: cycle provider on the THIRD screen
+  const cycleProviderThird = async (dir) => {
+    try {
+      // 明确标记第三屏为当前目标
+      try { setActiveSide('third'); } catch (_) {}
+      
+      if (!IS_ELECTRON || !window.electronAPI) return;
+      
+      const customProviders = await loadCustomProviders();
+      const ALL = { ...PROVIDERS };
+      (customProviders || []).forEach((c) => { ALL[c.key] = c; });
+      
+      const providerOrder = await chrome.storage.local.get('providerOrder').then(r => r.providerOrder || Object.keys(PROVIDERS));
+      if (!providerOrder.length) return;
+      
+      const current = __thirdCurrentProvider;
+      let idx = providerOrder.indexOf(current);
+      if (idx < 0) idx = 0;
+      const nextIdx = (idx + (dir || 1) + providerOrder.length) % providerOrder.length;
+      const nextKey = providerOrder[nextIdx];
+      const overridesNow = await getOverrides();
+      const p = effectiveConfig(ALL, nextKey, overridesNow);
+      
+      // 通知主进程切换第三屏的provider
+      if (window.electronAPI?.switchThirdProvider) {
+        const url = (currentUrlByProvider && currentUrlByProvider[nextKey]) || p.iframeUrl || p.baseUrl;
+        window.electronAPI.switchThirdProvider(nextKey, url);
+        __thirdCurrentProvider = nextKey;
+        __thirdCurrentUrl = url;
+        
+        // 更新UI状态：添加荧光色光圈
+        highlightProviderOnTabs(nextKey, 'third');
+      }
+      
+      console.log('[Third Screen] Cycled to provider:', nextKey);
+    } catch (_) {}
+  };
+  try { window.__AIPanelCycleProviderThird = cycleProviderThird; } catch (_) {}
+
   // Global keyboard shortcut to star current page (customizable, default: Ctrl+L)
   let __starShortcut = null;
   (async () => {
@@ -2646,7 +2956,15 @@ const initializeBar = async () => {
         e.preventDefault();
         e.stopPropagation();
         const dir = e.shiftKey ? -1 : 1;
-        await cycleProvider(dir);
+        
+        // 根据当前激活的屏幕决定调用哪个循环函数
+        if (__activeSide === 'third') {
+          await cycleProviderThird(dir);
+        } else if (__activeSide === 'right') {
+          await cycleProviderRight(dir);
+        } else {
+          await cycleProvider(dir);
+        }
       } catch (_) {}
     }, true);
   } catch (_) {}
@@ -2664,7 +2982,8 @@ const initializeBar = async () => {
         return e.key.toLowerCase() === shortcut.key.toLowerCase() &&
                e.ctrlKey === shortcut.ctrl &&
                e.shiftKey === shortcut.shift &&
-               e.altKey === shortcut.alt;
+               e.altKey === shortcut.alt &&
+               (shortcut.meta ? e.metaKey : !e.metaKey);
       };
       
       // Check Open in Tab
@@ -2714,6 +3033,19 @@ const initializeBar = async () => {
         e.preventDefault();
         const btn = document.getElementById('favoritesBtn');
         if (btn) btn.click();
+        return;
+      }
+      
+      // Check Align
+      if (isShortcutMatch(__buttonShortcuts.alignBtn)) {
+        e.preventDefault();
+        // Electron 环境下的 Cmd+Shift+A 由主进程执行三屏发送，渲染层不再弹出 Align 模态
+        if (IS_ELECTRON) {
+          return;
+        }
+        // 浏览器环境：仍然弹出 Align 模态
+        const btn = document.getElementById('alignBtn');
+        if (btn && btn.style.display !== 'none') btn.click();
         return;
       }
     } catch (_) {}
@@ -2863,7 +3195,11 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     const side = (data && data.side) || 'left';
     const step = dir >= 0 ? 1 : -1;
     setActiveSide(side);
-    if (side === 'right') {
+    if (side === 'third') {
+      if (window.__AIPanelCycleProviderThird) window.__AIPanelCycleProviderThird(step);
+      else if (window.__AIPanelCycleProviderRight) window.__AIPanelCycleProviderRight(step);
+      else if (window.__AIPanelCycleProvider) window.__AIPanelCycleProvider(step);
+    } else if (side === 'right') {
       if (window.__AIPanelCycleProviderRight) window.__AIPanelCycleProviderRight(step);
       else if (window.__AIPanelCycleProvider) window.__AIPanelCycleProvider(step);
     } else {
@@ -3479,6 +3815,117 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     } catch (_) {}
   } catch (_) {}
 })();
+
+// ============== Align Modal Functions ==============
+function showAlignModal() {
+  const modal = document.getElementById('alignModal');
+  if (!modal) return;
+  
+  // 获取所有可用的AI提供商
+  const providers = Object.keys(ALL).filter(key => ALL[key] && ALL[key].name);
+  
+  const providerCheckboxes = providers.map(key => {
+    const provider = ALL[key];
+    return `
+      <div class="provider-checkbox">
+        <label>
+          <input type="checkbox" value="${key}" data-provider="${key}">
+          <span class="provider-name">${provider.name}</span>
+        </label>
+      </div>
+    `;
+  }).join('');
+  
+  modal.innerHTML = `
+    <div class="settings-modal-backdrop"></div>
+    <div class="settings-modal-content">
+      <div class="settings-header">
+        <h2>Send to Multiple AIs</h2>
+        <button class="settings-close-btn" title="Close">&times;</button>
+      </div>
+      <div class="settings-body">
+        <div class="align-message-input">
+          <label for="alignMessage">Message to send:</label>
+          <textarea id="alignMessage" placeholder="Enter your message here..." rows="4"></textarea>
+        </div>
+        <div class="align-providers">
+          <label>Select AI providers:</label>
+          <div class="providers-list">
+            ${providerCheckboxes}
+          </div>
+        </div>
+        <div class="align-actions">
+          <button id="alignSendBtn" class="align-send-btn">Send to Selected AIs</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  modal.style.display = 'flex';
+  
+  const closeBtn = modal.querySelector('.settings-close-btn');
+  const backdrop = modal.querySelector('.settings-modal-backdrop');
+  const sendBtn = modal.querySelector('#alignSendBtn');
+  const messageInput = modal.querySelector('#alignMessage');
+  
+  const closeModal = () => {
+    modal.style.display = 'none';
+  };
+  
+  closeBtn.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', closeModal);
+  
+  // 发送消息到选中的AI
+  sendBtn.addEventListener('click', async () => {
+    const message = messageInput.value.trim();
+    if (!message) {
+      alert('Please enter a message to send.');
+      return;
+    }
+    
+    const selectedProviders = Array.from(modal.querySelectorAll('input[type="checkbox"]:checked'))
+      .map(checkbox => checkbox.value);
+    
+    if (selectedProviders.length === 0) {
+      alert('Please select at least one AI provider.');
+      return;
+    }
+    
+    // 发送消息到选中的提供商
+    await sendMessageToProviders(message, selectedProviders);
+    closeModal();
+  });
+  
+  // 自动聚焦到消息输入框
+  setTimeout(() => {
+    messageInput.focus();
+  }, 100);
+};
+
+async function sendMessageToProviders(message, providerKeys) {
+  for (const providerKey of providerKeys) {
+    try {
+      // 切换到对应的提供商
+      await setProvider(providerKey);
+      
+      // 等待一下让页面加载
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 发送消息（Electron：注入并自动发送）
+      if (IS_ELECTRON && window.electronAPI?.injectAndSend) {
+        await window.electronAPI.injectAndSend(message);
+      } else if (IS_ELECTRON && window.electronAPI?.injectText) {
+        // 兼容旧版本：仅注入文本
+        await window.electronAPI.injectText(message);
+      }
+      
+      // 等待一下再切换到下一个
+      await new Promise(resolve => setTimeout(resolve, 300));
+    } catch (error) {
+      console.error(`Failed to send message to ${providerKey}:`, error);
+    }
+  }
+};
 
 // ============== 移除窗口尺寸调试显示 ==============
 (function removeSizeIndicator() {

@@ -46,6 +46,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSplitRatio: (ratio) => {
     ipcRenderer.send('set-split-ratio', ratio);
   },
+  
+  // 第三屏（三分屏）支持
+  setThreeScreenMode: (enable) => {
+    try { ipcRenderer.send('set-three-screen-mode', !!enable); } catch (_) {}
+  },
+  setThreeSplitRatios: (r1, r2) => {
+    try { ipcRenderer.send('set-three-ratios', { r1, r2 }); } catch (_) {}
+  },
+  openThirdScreen: (url) => {
+    try { ipcRenderer.send('open-third-screen', { url }); } catch (_) {}
+  },
+  switchThirdProvider: (key, url) => {
+    try { ipcRenderer.send('switch-third-provider', { key, url }); } catch (_) {}
+  },
+  focusThirdScreen: () => {
+    try { ipcRenderer.send('focus-third'); } catch (_) {}
+  },
   // 左侧导航栏宽度（用于让出 BrowserView 左边距）
   setSidebarWidth: (px) => {
     ipcRenderer.send('set-sidebar-width', px);
@@ -121,9 +138,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('full-width-changed', (event, state) => callback(state));
   },
 
+  // Text injection helpers for Align/Multisend
+  injectText: async (text) => {
+    try { return await ipcRenderer.invoke('inject-text', { text }); } catch (e) { return { ok:false, error: String(e) }; }
+  },
+  injectAndSend: async (text) => {
+    try { return await ipcRenderer.invoke('inject-and-send', { text }); } catch (e) { return { ok:false, error: String(e) }; }
+  },
+
   // 侧向指示（渲染层 -> 主进程）
   setActiveSide: (side) => {
-    try { ipcRenderer.send('active-side', side === 'right' ? 'right' : 'left'); } catch (_) {}
+    try {
+      const s = (side === 'right' || side === 'third') ? side : 'left';
+      ipcRenderer.send('active-side', s);
+    } catch (_) {}
   },
 
   // Tab 锁定（将 Tab/Shift+Tab 强制绑定到某一侧；传入 'left' | 'right' | null）
