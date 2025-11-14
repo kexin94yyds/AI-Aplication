@@ -171,7 +171,9 @@ html {
   box-shadow: 0 0 0 3px rgba(90, 132, 255, 0.1);
 }
 
-.address-bar-wrapper #addressGo {
+/* 中间和第三屏的“前往”按钮统一样式 */
+.address-bar-wrapper #addressGo,
+.address-bar-wrapper #addressGoThird {
   flex: 0 0 auto;
   height: 28px;
   padding: 0 16px;
@@ -186,8 +188,9 @@ html {
   -webkit-app-region: no-drag;
 }
 
-/* Tab 锁定到右侧按钮（样式与 addressGo 类似） */
-.address-bar-wrapper #tabLockRight {
+/* Tab 锁定按钮（右侧 / 第三屏）样式与 addressGo 类似 */
+.address-bar-wrapper #tabLockRight,
+.address-bar-wrapper #tabLockThird {
   flex: 0 0 auto;
   height: 28px;
   padding: 0 12px;
@@ -201,20 +204,25 @@ html {
   transition: all 0.2s ease;
   -webkit-app-region: no-drag;
 }
-.address-bar-wrapper #tabLockRight:hover { background: #f8fafc; border-color: #dbe1e8; }
-.address-bar-wrapper #tabLockRight:active { background: #f1f5f9; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
-.address-bar-wrapper #tabLockRight.active {
+.address-bar-wrapper #tabLockRight:hover,
+.address-bar-wrapper #tabLockThird:hover { background: #f8fafc; border-color: #dbe1e8; }
+.address-bar-wrapper #tabLockRight:active,
+.address-bar-wrapper #tabLockThird:active { background: #f1f5f9; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
+.address-bar-wrapper #tabLockRight.active,
+.address-bar-wrapper #tabLockThird.active {
   background: #eef2ff;
   border-color: #c7d2fe;
   color: #3730a3;
 }
 
-.address-bar-wrapper #addressGo:hover {
+.address-bar-wrapper #addressGo:hover,
+.address-bar-wrapper #addressGoThird:hover {
   background: #f8fafc;
   border-color: #dbe1e8;
 }
 
-.address-bar-wrapper #addressGo:active {
+.address-bar-wrapper #addressGo:active,
+.address-bar-wrapper #addressGoThird:active {
   background: #f1f5f9;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
 }

@@ -4,6 +4,43 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 
+// ============== 网络兼容性选项（可选） ==============
+// 某些网络/代理设备（尤其是不支持 ECH/HTTPS SVCB 或对 TLS1.3 有兼容性问题的环境）
+// 可能导致特定站点（如 gemini.google.com）在 Electron/Chromium 中握手失败（ERR_CONNECTION_CLOSED/-100）。
+// 下面的开关允许在需要时通过环境变量启用网络兼容模式：
+//  - AISB_NET_COMPAT=1            禁用 ECH/SVCB/QUIC，且将最小 TLS 版本设为 TLS1.2
+//  - AISB_DISABLE_ECH=1           仅禁用 ECH/SVCB
+//  - AISB_IGNORE_CERT_ERRORS=1    忽略证书错误（仅调试用，勿在生产中使用）
+//  - AISB_NETLOG=/path/netlog.json  记录 Chromium 网络日志，便于排查
+try {
+  const compat = process.env.AISB_NET_COMPAT === '1';
+  const disableECH = process.env.AISB_DISABLE_ECH === '1';
+  if (compat || disableECH) {
+    // 禁用 Encrypted ClientHello 与 HTTPS/SVCB 记录解析（部分中间盒/代理无法处理）
+    app.commandLine.appendSwitch('disable-features', 'EncryptedClientHello,UseDnsHttpsSvcb');
+  }
+  if (compat) {
+    // 某些代理对 TLS1.3/QUIC 兼容性差，禁用 QUIC 并将最小版本设为 TLS1.2（避免 1.3 特性）
+    app.commandLine.appendSwitch('disable-quic');
+    app.commandLine.appendSwitch('ssl-version-min', 'tls1.2');
+  }
+  if (process.env.AISB_IGNORE_CERT_ERRORS === '1') {
+    app.commandLine.appendSwitch('ignore-certificate-errors');
+  }
+  if (process.env.AISB_NETLOG && String(process.env.AISB_NETLOG).trim()) {
+    app.commandLine.appendSwitch('log-net-log', String(process.env.AISB_NETLOG).trim());
+  }
+} catch (_) {}
+
+// 仅记录证书错误，帮助定位（不自动放行）
+try {
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    console.error('[CERTIFICATE_ERROR]', { url, error });
+    // 默认拒绝，保持安全（若调试需要跳过，请设置 AISB_IGNORE_CERT_ERRORS=1 以启用 Chromium 开关）
+    callback(false);
+  });
+} catch (_) {}
+
 let mainWindow = null;
 let isShowing = false;
 let currentBrowserView = null;
@@ -23,9 +60,9 @@ let threeSplitR1 = 1/3; // 左列在 free 宽度中的占比
 let threeSplitR2 = 1/3; // 中列在 free 宽度中的占比
 // 跟踪最近获得焦点的 BrowserView（用于定向刷新）
 let lastFocusedBrowserView = null;
-// 最近一次用于 Tab 切换的目标侧（'left' 或 'right'），用于“强制切换”体验
+// 最近一次用于 Tab 切换的目标侧（'left' / 'right' / 'third'），用于“强制切换”体验
 let lastTabTargetSide = 'left'; // 'left' | 'right' | 'third'
-// 显式锁定 Tab 切换的目标侧：'left' | 'right' | null（不锁定）
+// 显式锁定 Tab 切换的目标侧：'left' | 'right' | 'third' | null（不锁定）
 let forcedTabSide = null;
 // 当 BrowserView 已处理 Tab 时，短暂抑制主窗口的全局 Tab 处理，避免双触发
 let suppressGlobalTabUntilTs = 0;
@@ -386,10 +423,11 @@ function createWindow() {
     ensureBrowserViewsAttached('resize');
     // 移除尺寸显示（如果存在）
     try {
-      mainWindow.webContents.executeJavaScript(`
-        const sizeIndicator = document.getElementById('window-size-indicator');
-        if (sizeIndicator) sizeIndicator.remove();
-      `).catch(() => {});
+      // 使用 IIFE 避免在全局重复声明变量导致 SyntaxError（控制台出现 "Identifier 'x' has already been declared"）
+      mainWindow.webContents.executeJavaScript(`(() => {
+        const el = document.getElementById('window-size-indicator');
+        if (el) el.remove();
+      })();`).catch(() => {});
     } catch (_) {}
   });
 
@@ -542,6 +580,11 @@ function getOrCreateBrowserView(providerKey) {
     }
   });
   try { view.webContents.setMaxListeners(0); } catch (_) {}
+  // 规避站点或网络对 Electron UA 的特殊处理：改为更接近 Chrome 的 UA（不影响 TLS 层）
+  try {
+    const ua = view.webContents.getUserAgent();
+    view.webContents.setUserAgent(ua.replace(/ Electron\/[0-9.]+/, ''));
+  } catch (_) {}
 
   // 跟踪焦点：点击该视图后，后续刷新将定向到它
   try {
@@ -709,6 +752,11 @@ function cycleToNextProvider(dir = 1, sidePreferred = null) {
   // 显式锁定优先
   if (forcedTabSide === 'left') {
     side = 'left';
+  } else if (forcedTabSide === 'third') {
+    // 仅在第三屏存在时才强制第三屏，否则降级为右侧或左侧
+    side = (isThreeScreenMode && thirdBrowserView) ? 'third'
+      : (isEmbeddedBrowserActive && embeddedBrowserView) ? 'right'
+      : 'left';
   } else if (forcedTabSide === 'right') {
     // 仅在右侧视图存在时强制右侧，否则优雅降级为左侧
     side = (isEmbeddedBrowserActive && embeddedBrowserView) ? 'right' : 'left';
@@ -744,6 +792,7 @@ ipcMain.on('set-tab-lock', (event, side) => {
     const prev = forcedTabSide;
     if (side === 'right') forcedTabSide = 'right';
     else if (side === 'left') forcedTabSide = 'left';
+    else if (side === 'third') forcedTabSide = 'third';
     else forcedTabSide = null;
     if (prev !== forcedTabSide) {
       try { mainWindow?.webContents.send('tab-lock-changed', { side: forcedTabSide }); } catch (_) {}
@@ -909,8 +958,10 @@ function updateBrowserViewBounds() {
       embeddedBrowserView.setAutoResize({ width: false, height: false });
     }
 
-    // 右侧第三屏（全高）
-    thirdBrowserView.setBounds({ x: right2X, y: topBarHeight, width: right2Width, height: availableHeight });
+    // 右侧第三屏：也为第三屏地址栏让出空间（与中间一致）
+    const thirdY = Math.max(topBarHeight, addressBarBottom);
+    const thirdH = availableHeight - (thirdY - topBarHeight);
+    thirdBrowserView.setBounds({ x: right2X, y: thirdY, width: right2Width, height: thirdH });
     thirdBrowserView.setAutoResize({ width: false, height: false });
 
     console.log('[Three Split] bounds', {
@@ -1418,6 +1469,11 @@ function openEmbeddedBrowser(url, opts = {}) {
       });
       try { embeddedBrowserView.webContents.setMaxListeners(0); } catch (_) {}
       embeddedBrowserPartition = requestedPartition;
+      // 去除 UA 中的 Electron 标识（与左侧一致）
+      try {
+        const ua2 = embeddedBrowserView.webContents.getUserAgent();
+        embeddedBrowserView.webContents.setUserAgent(ua2.replace(/ Electron\/[0-9.]+/, ''));
+      } catch (_) {}
 
       // 监听导航事件
       embeddedBrowserView.webContents.on('did-navigate', (event, navigationUrl) => {
@@ -1607,6 +1663,13 @@ ipcMain.on('navigate-embedded-browser', (event, url) => {
   }
 });
 
+// IPC 处理器：导航第三屏浏览器
+ipcMain.on('navigate-third-browser', (event, url) => {
+  if (!url || typeof url !== 'string') { console.error('[Third Browser] Invalid URL for navigation:', url); return; }
+  if (!isThreeScreenMode || !thirdBrowserView) { console.warn('[Third Browser] Not active, opening third screen'); openThirdScreen(url, { partition: thirdBrowserPartition }); return; }
+  try { thirdBrowserView.webContents.loadURL(url); } catch (e) { console.error('[Third Browser] Navigation error:', e); }
+});
+
 // Tab 键切换 provider（由渲染进程触发）
 ipcMain.on('cycle-provider-next', () => {
   cycleToNextProvider();
@@ -1652,6 +1715,26 @@ function ensureThirdView(partition = thirdBrowserPartition) {
     }
   });
   try { thirdBrowserView.webContents.setMaxListeners(0); } catch (_) {}
+  // 去除 UA 中的 Electron 标识
+  try {
+    const ua3 = thirdBrowserView.webContents.getUserAgent();
+    thirdBrowserView.webContents.setUserAgent(ua3.replace(/ Electron\/[0-9.]+/, ''));
+  } catch (_) {}
+  // 监听第三屏 URL 变化，便于同步地址栏
+  try {
+    thirdBrowserView.webContents.on('did-navigate', (event, url) => {
+      try { mainWindow?.webContents.send('third-browser-url-changed', { url }); } catch (_) {}
+    });
+    thirdBrowserView.webContents.on('did-navigate-in-page', (event, url) => {
+      try { mainWindow?.webContents.send('third-browser-url-changed', { url }); } catch (_) {}
+    });
+    thirdBrowserView.webContents.on('did-finish-load', () => {
+      try {
+        const url = thirdBrowserView.webContents.getURL();
+        mainWindow?.webContents.send('third-browser-url-changed', { url });
+      } catch (_) {}
+    });
+  } catch (_) {}
   // 监听键盘：Tab/刷新
   try {
     thirdBrowserView.webContents.on('before-input-event', (event, input) => {
@@ -1690,6 +1773,8 @@ function openThirdScreen(url, opts = {}) {
     isThreeScreenMode = true;
     try { mainWindow.addBrowserView(thirdBrowserView); } catch (_) {}
     updateBrowserViewBounds();
+    // 通知渲染层第三屏已打开，用于补齐分割线/地址栏等 UI 状态
+    try { mainWindow.webContents.send('third-screen-opened', { url: thirdBrowserView.webContents.getURL?.() || url || '' }); } catch (_) {}
   } catch (e) { console.error('openThirdScreen error:', e); }
 }
 
@@ -1717,6 +1802,18 @@ ipcMain.on('set-top-inset', (event, px) => {
       updateBrowserViewBounds();
     }
   } catch (_) {}
+});
+
+// 查询当前分屏/三分屏状态，供渲染层在初始化时同步 UI（避免事件竞态导致分割线缺失）
+ipcMain.on('get-split-state', (event) => {
+  try {
+    event.reply('split-state', {
+      isEmbedded: !!isEmbeddedBrowserActive,
+      isThree: !!isThreeScreenMode
+    });
+  } catch (_) {
+    try { event.reply('split-state', { isEmbedded: false, isThree: false }); } catch (__){ }
+  }
 });
 
 // 三分屏开关
@@ -1783,6 +1880,12 @@ ipcMain.on('close-third-screen', () => {
 ipcMain.on('close-active-pane', (event, payload) => {
   try {
     const side = payload && payload.side;
+    if (side === 'all') {
+      // 始终回到左侧单屏：先关第三屏，再关右侧
+      try { closeThirdScreen(); } catch (_) {}
+      try { closeEmbeddedBrowser(); } catch (_) {}
+      return;
+    }
     if (side === 'third') { closeThirdScreen(); return; }
     if (side === 'right') { closeEmbeddedBrowser(); return; }
     // 未显式指定：依据最近焦点

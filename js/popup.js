@@ -357,16 +357,48 @@ function toggleThreeScreenMode(enable) {
     const body = document.body;
     const thirdScreen = document.getElementById('thirdScreen');
     const thirdDivider = document.getElementById('thirdDivider');
+    const splitDivider = document.getElementById('splitDivider');
+    const addressBarThird = document.getElementById('addressBarThird');
     
     if (enable) {
       body.classList.add('three-screen-mode');
       if (thirdScreen) thirdScreen.style.display = 'block';
-      if (thirdDivider) thirdDivider.style.display = 'block';
+      if (thirdDivider) {
+        thirdDivider.style.display = 'block';
+        // 确保第三屏分割线在最上层且可见
+        thirdDivider.style.pointerEvents = 'auto';
+        thirdDivider.style.zIndex = '2147483647';
+        thirdDivider.style.opacity = '';
+      }
+      // 提前显示左侧分割线，避免第一次进入三屏时短暂缺失
+      if (splitDivider && splitDivider.style.display === 'none') {
+        splitDivider.style.display = 'block';
+        splitDivider.style.pointerEvents = 'auto';
+        splitDivider.style.zIndex = '2147483647';
+        splitDivider.style.opacity = '';
+      }
+      // 显示第三屏地址栏
+      if (addressBarThird) addressBarThird.style.display = 'block';
       console.log('[Three Screen Mode] Enabled');
+      // 三分屏刚开启时，分隔线位置依赖于布局计算。
+      // 在某些情况下（例如右侧已开启但不会再次触发回调），
+      // 分隔线不会立即更新，导致中间列宽度异常。
+      // 主动触发一次“resize”以复用现有的监听逻辑，
+      // 让 updateDividerPositionsForThree 等计算立即执行。
+      try {
+        // 立即计算一次分割线位置，避免首帧不正确
+        setTimeout(() => {
+          try {
+            if (typeof updateDividerPositionsForThree === 'function') updateDividerPositionsForThree();
+            window.dispatchEvent(new Event('resize'));
+          } catch (_) {}
+        }, 30);
+      } catch (_) {}
     } else {
       body.classList.remove('three-screen-mode');
       if (thirdScreen) thirdScreen.style.display = 'none';
       if (thirdDivider) thirdDivider.style.display = 'none';
+      if (addressBarThird) addressBarThird.style.display = 'none';
       // 清除第三屏状态
       __thirdCurrentProvider = null;
       __thirdCurrentUrl = null;
@@ -1730,10 +1762,16 @@ const initializeBar = async () => {
 
           // 分割线需要避开“地址栏”区域，否则会遮挡输入
           const addressBarEl = document.getElementById('addressBar');
+          const addressBarThirdEl = document.getElementById('addressBarThird');
           let dividerTop = inset;
           if (addressBarEl && addressBarEl.style.display !== 'none') {
             const barRect = addressBarEl.getBoundingClientRect();
             // 地址栏底部再留 4px 呼吸空间
+            const barBottomWithGap = Math.round((barRect.top || 0) + (barRect.height || 36) + 4);
+            dividerTop = Math.max(dividerTop, barBottomWithGap);
+          }
+          if (addressBarThirdEl && addressBarThirdEl.style.display !== 'none') {
+            const barRect = addressBarThirdEl.getBoundingClientRect();
             const barBottomWithGap = Math.round((barRect.top || 0) + (barRect.height || 36) + 4);
             dividerTop = Math.max(dividerTop, barBottomWithGap);
           }
@@ -1765,6 +1803,7 @@ const initializeBar = async () => {
               splitDivider.style.left = `${x1}px`;
               thirdDividerEl.style.left = `${x2}px`;
               updateAddressBarPosition();
+              if (typeof updateAddressBarThirdPosition === 'function') updateAddressBarThirdPosition();
             }
           } catch (_) {}
         }
@@ -1813,21 +1852,20 @@ const initializeBar = async () => {
         splitDivider.style.left = `${x1}px`;
         thirdDivider.style.left = `${x2}px`;
 
-        // 同步地址栏水平范围：限制在中间列内
+        // 同步中间/第三屏地址栏的水平范围
         try {
-          const addressBar = document.getElementById('addressBar');
-          if (addressBar && addressBar.style.display !== 'none') {
-            addressBar.style.left = `${x1 + 4}px`;
-            const rightPx = Math.max(8, Math.floor(window.innerWidth - x2 + 8));
-            addressBar.style.right = `${rightPx}px`;
-          }
+          if (typeof updateAddressBarPosition === 'function') updateAddressBarPosition();
+          if (typeof updateAddressBarThirdPosition === 'function') updateAddressBarThirdPosition();
         } catch (_) {}
       };
       
-      // 地址栏相关元素
+      // 地址栏相关元素（中间 + 第三屏）
       const addressBar = document.getElementById('addressBar');
       const addressInput = document.getElementById('addressInput');
       const addressGo = document.getElementById('addressGo');
+      const addressBarThird = document.getElementById('addressBarThird');
+      const addressInputThird = document.getElementById('addressInputThird');
+      const addressGoThird = document.getElementById('addressGoThird');
 
       // 与右侧相关的交互一律标记 activeSide=right，保证后续 Tab 切换走右侧
       try {
@@ -1835,6 +1873,10 @@ const initializeBar = async () => {
         addressBar?.addEventListener('focusin', () => setActiveSide('right'));
         addressInput?.addEventListener('focus', () => setActiveSide('right'));
         addressGo?.addEventListener('click', () => setActiveSide('right'));
+        addressBarThird?.addEventListener('mousedown', () => setActiveSide('third'));
+        addressBarThird?.addEventListener('focusin', () => setActiveSide('third'));
+        addressInputThird?.addEventListener('focus', () => setActiveSide('third'));
+        addressGoThird?.addEventListener('click', () => setActiveSide('third'));
         const splitDividerEl = document.getElementById('splitDivider');
         splitDividerEl?.addEventListener('mousedown', () => setActiveSide('right'));
         const thirdDividerEl = document.getElementById('thirdDivider');
@@ -1886,23 +1928,100 @@ const initializeBar = async () => {
           window.electronAPI.navigateEmbeddedBrowser(url);
         }
       };
+
+      // 处理第三屏地址栏导航
+      const handleAddressNavigationThird = () => {
+        if (!addressInputThird || !window.electronAPI) return;
+        const inputValue = addressInputThird.value.trim();
+        if (!inputValue) return;
+        let url = inputValue;
+        if (!isValidUrl(url)) url = getSearchUrl(url);
+        else if (!url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+        if (window.electronAPI.navigateThirdBrowser) {
+          window.electronAPI.navigateThirdBrowser(url);
+        }
+      };
       
       // 更新地址栏位置（使其位于右侧内容区域）
       const updateAddressBarPosition = () => {
         if (!addressBar || !splitDivider || splitDivider.style.display === 'none') return;
         try {
-          const dividerLeft = parseFloat(splitDivider.style.left) || 0;
-          // 默认两屏：从分隔线右侧到窗口右缘
-          let leftPx = dividerLeft + 4;
-          let rightPx = 8;
-          // 三分屏：限制在中间列内（右侧以第二条分割线为界）
+          const providerTabs = document.getElementById('provider-tabs');
+          const sidebarWidth = (providerTabs && (providerTabs.offsetWidth || 60)) || 60;
+          const gutter = 24;
+          const halfG = 12;
+
+          // 计算第一条分隔线的“中心”坐标
+          const rect1 = splitDivider.getBoundingClientRect ? splitDivider.getBoundingClientRect() : null;
+          const styleLeft1 = parseFloat(splitDivider.style.left);
+          const center1 = Number.isFinite(styleLeft1)
+            ? styleLeft1
+            : rect1
+              ? (rect1.left + (rect1.width || 24) / 2)
+              : (sidebarWidth + (window.innerWidth - sidebarWidth) / 3);
+          const main = document.getElementById('main-content');
+          const mainRect = main && main.getBoundingClientRect ? main.getBoundingClientRect() : null;
+          const mainLeft = mainRect ? mainRect.left : sidebarWidth;
+          const mainWidth = mainRect ? mainRect.width : (window.innerWidth - sidebarWidth);
+          const center1Local = center1 - mainLeft;
+
+          let leftPx = center1Local + 4; // 默认二分屏：从分隔线右侧一点开始
+          let rightPx = 8;         // 默认右侧留 8px 呼吸空间
+
           if (__threeScreenMode) {
             const thirdDivider = document.getElementById('thirdDivider');
-            const thirdLeft = thirdDivider ? (parseFloat(thirdDivider.style.left) || thirdDivider.getBoundingClientRect().left || 0) : 0;
-            rightPx = Math.max(8, Math.floor(window.innerWidth - thirdLeft + 8));
+            const rect2 = thirdDivider && thirdDivider.getBoundingClientRect ? thirdDivider.getBoundingClientRect() : null;
+            const styleLeft2 = thirdDivider ? parseFloat(thirdDivider.style.left) : NaN;
+            const center2 = thirdDivider && Number.isFinite(styleLeft2)
+              ? styleLeft2
+              : rect2
+                ? (rect2.left + (rect2.width || 24) / 2)
+                : (center1 + ((window.innerWidth - sidebarWidth - gutter * 2) || 0) / 2 + gutter);
+            const center2Local = center2 - mainLeft;
+
+            // 中间 BrowserView 的左右边界：
+            // 左边界：第一条分隔线中心 + halfG
+            // 右边界：第二条分隔线中心 - halfG
+            const midLeft = center1Local + halfG;
+            const midRight = center2Local - halfG;
+            // 地址栏再向内缩 4px，避免贴边
+            leftPx = midLeft + 4;
+            const rightEdge = midRight - 4;
+            rightPx = Math.max(8, Math.floor(mainWidth - rightEdge));
           }
+
           addressBar.style.left = `${leftPx}px`;
           addressBar.style.right = `${rightPx}px`;
+        } catch (_) {}
+      };
+
+      // 第三屏地址栏位置：从第二条分割线右侧到窗口右缘
+      const updateAddressBarThirdPosition = () => {
+        if (!addressBarThird) return;
+        try {
+          const thirdDivider = document.getElementById('thirdDivider');
+          const main = document.getElementById('main-content');
+          const mainRect = main && main.getBoundingClientRect ? main.getBoundingClientRect() : null;
+          const mainLeft = mainRect ? mainRect.left : 0;
+          const gutter = 24;
+          const halfG = 12;
+          let center2 = 0;
+          if (thirdDivider) {
+            const rect2 = thirdDivider.getBoundingClientRect ? thirdDivider.getBoundingClientRect() : null;
+            const styleLeft2 = parseFloat(thirdDivider.style.left);
+            const center2Global = Number.isFinite(styleLeft2)
+              ? styleLeft2
+              : rect2
+                ? (rect2.left + (rect2.width || 24) / 2)
+                : 0;
+            center2 = center2Global - mainLeft;
+          }
+          // 右侧 BrowserView 左边界 = 第二条分隔线中心 + halfG
+          const paneLeft = center2 + halfG;
+          const leftPx = Math.max(0, Math.floor(paneLeft + 4)); // 再缩进 4px
+          const rightPx = 8;
+          addressBarThird.style.left = `${leftPx}px`;
+          addressBarThird.style.right = `${rightPx}px`;
         } catch (_) {}
       };
       
@@ -1921,11 +2040,14 @@ const initializeBar = async () => {
           // 确保分隔线可以接收事件
           splitDivider.style.pointerEvents = 'auto';
           splitDivider.style.zIndex = '2147483647';
+          // 避免曾在 overlay 模式下被设置为透明
+          splitDivider.style.opacity = '';
           // 立即更新分割线位置，确保与布局同步
           setTimeout(() => {
             try {
               if (__threeScreenMode) {
                 updateDividerPositionsForThree();
+                updateAddressBarThirdPosition();
               } else {
                 const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
                 updateDividerPositionFromRatio(savedRatio);
@@ -1936,6 +2058,7 @@ const initializeBar = async () => {
               }
               // 更新地址栏位置
               updateAddressBarPosition();
+              updateAddressBarThirdPosition();
               // 再次刷新 divider 顶部，确保避开已显示的地址栏
               applyTopInset();
             } catch (_) {}
@@ -1948,6 +2071,10 @@ const initializeBar = async () => {
           setTimeout(() => {
             updateAddressBarPosition();
           }, 100);
+        }
+        if (__threeScreenMode && addressBarThird) {
+          addressBarThird.style.display = 'block';
+          setTimeout(() => { updateAddressBarThirdPosition(); }, 100);
         }
       };
       const hideBackButton = () => {
@@ -2008,8 +2135,43 @@ const initializeBar = async () => {
         try { highlightProviderOnTabs(null); } catch (_) {}
       });
 
-      // 监听第三屏关闭事件：恢复到二分屏 UI
+      // 监听第三屏打开/关闭事件：同步三分屏 UI 状态
       try {
+        // 第三屏真正打开时，无论是通过 Cmd+Shift+点击还是其它路径，
+        // 都在这里统一补齐三分屏的分割线与地址栏状态，避免竞态导致竖线缺失。
+        window.electronAPI.onThirdOpened?.(() => {
+          try {
+            __threeScreenMode = true;
+            const body = document.body;
+            body.classList.add('three-screen-mode');
+            const splitDividerEl = document.getElementById('splitDivider');
+            const thirdDivider = document.getElementById('thirdDivider');
+            const addressBarThird = document.getElementById('addressBarThird');
+            if (splitDividerEl) {
+              splitDividerEl.style.display = 'block';
+              splitDividerEl.style.pointerEvents = 'auto';
+              splitDividerEl.style.zIndex = '2147483647';
+              splitDividerEl.style.opacity = '';
+            }
+            if (thirdDivider) {
+              thirdDivider.style.display = 'block';
+              thirdDivider.style.pointerEvents = 'auto';
+              thirdDivider.style.zIndex = '2147483647';
+              thirdDivider.style.opacity = '';
+            }
+            if (addressBarThird) addressBarThird.style.display = 'block';
+            // 统一重新计算两条竖线和地址栏的位置
+            setTimeout(() => {
+              try {
+                if (typeof updateDividerPositionsForThree === 'function') updateDividerPositionsForThree();
+                updateAddressBarPosition();
+                if (typeof updateAddressBarThirdPosition === 'function') updateAddressBarThirdPosition();
+                applyTopInset();
+              } catch (_) {}
+            }, 40);
+          } catch (_) {}
+        });
+
         window.electronAPI.onThirdClosed?.(() => {
           try {
             __threeScreenMode = false;
@@ -2017,6 +2179,8 @@ const initializeBar = async () => {
             body.classList.remove('three-screen-mode');
             const thirdDivider = document.getElementById('thirdDivider');
             if (thirdDivider) thirdDivider.style.display = 'none';
+            const addressBarThird = document.getElementById('addressBarThird');
+            if (addressBarThird) addressBarThird.style.display = 'none';
             // 回到右侧为激活侧
             setActiveSide('right');
           } catch (_) {}
@@ -2044,8 +2208,15 @@ const initializeBar = async () => {
           } catch (_) {}
         });
       }
+
+      // 监听第三屏 URL 变化，更新第三屏地址栏
+      if (addressInputThird && window.electronAPI?.onThirdBrowserUrlChanged) {
+        window.electronAPI.onThirdBrowserUrlChanged((data) => {
+          try { if (data && data.url && addressInputThird) addressInputThird.value = data.url; } catch (_) {}
+        });
+      }
       
-      // 地址栏事件处理
+      // 地址栏事件处理（中间）
       if (addressInput && addressGo && window.electronAPI) {
         // 点击"前往"按钮
         addressGo.addEventListener('click', handleAddressNavigation);
@@ -2058,58 +2229,105 @@ const initializeBar = async () => {
           }
         });
 
-        // Tab 右侧锁定按钮
-        const tabLockBtn = document.getElementById('tabLockRight');
+        // Tab 锁定按钮（右侧 / 第三屏）
+        const tabLockRightBtn = document.getElementById('tabLockRight');
+        const tabLockThirdBtn = document.getElementById('tabLockThird');
         const renderTabLock = (side) => {
           const lockedRight = (side === 'right');
-          if (!tabLockBtn) return;
-          tabLockBtn.classList.toggle('active', !!lockedRight);
-          tabLockBtn.textContent = lockedRight ? 'Locked ▶︎' : 'Lock ▶︎';
-          tabLockBtn.title = lockedRight ? '已锁定 Tab 到右侧（再次点击解锁）' : '锁定 Tab 到右侧';
+          const lockedThird = (side === 'third');
+          if (tabLockRightBtn) {
+            tabLockRightBtn.classList.toggle('active', !!lockedRight);
+            tabLockRightBtn.textContent = lockedRight ? 'Locked ▶︎' : 'Lock ▶︎';
+            tabLockRightBtn.title = lockedRight ? '已锁定 Tab 到右侧（再次点击解锁）' : '锁定 Tab 到右侧';
+          }
+          if (tabLockThirdBtn) {
+            tabLockThirdBtn.classList.toggle('active', !!lockedThird);
+            tabLockThirdBtn.textContent = lockedThird ? 'Locked ▶︎' : 'Lock ▶︎';
+            tabLockThirdBtn.title = lockedThird ? '已锁定 Tab 到第三屏（再次点击解锁）' : '锁定 Tab 到第三屏';
+          }
         };
-        if (tabLockBtn) {
-          // 初始化状态
+
+        const initTabLockState = () => {
           if (IS_ELECTRON && window.electronAPI?.getTabLock) {
-            window.electronAPI.getTabLock().then((side) => {
-              // 若主进程没有锁定，但本地有记忆，则恢复
+            window.electronAPI.getTabLock().then((payload) => {
+              let side = (payload && payload.side) || payload || null;
+              // 若主进程没有锁定，但本地有记忆，则恢复（兼容旧版本仅 right/left）
               if ((side === null || side === undefined) && typeof localStorage !== 'undefined') {
                 const saved = localStorage.getItem('tabLockSide');
-                if (saved === 'right' || saved === 'left') {
+                if (saved === 'right' || saved === 'left' || saved === 'third') {
                   try { window.electronAPI.setTabLock(saved); side = saved; } catch (_) {}
                 }
               }
               renderTabLock(side);
             });
-            window.electronAPI.onTabLockChanged?.(renderTabLock);
+            window.electronAPI.onTabLockChanged?.((payload) => {
+              const side = (payload && payload.side) || payload || null;
+              renderTabLock(side);
+            });
           } else {
             renderTabLock(localStorage.getItem('tabLockSide'));
           }
-          // 点击切换锁定
-          tabLockBtn.addEventListener('click', async () => {
+        };
+
+        if (tabLockRightBtn || tabLockThirdBtn) {
+          initTabLockState();
+        }
+
+        const toggleLock = async (targetSide) => {
+          try {
+            if (!IS_ELECTRON || !window.electronAPI?.getTabLock) {
+              // 仅本地模式
+              const cur = localStorage.getItem('tabLockSide');
+              const next = (cur === targetSide) ? null : targetSide;
+              if (next) localStorage.setItem('tabLockSide', next); else localStorage.removeItem('tabLockSide');
+              renderTabLock(next);
+              return;
+            }
+            const curPayload = await window.electronAPI.getTabLock();
+            const curSide = (curPayload && curPayload.side) || curPayload || null;
+            const next = (curSide === targetSide) ? null : targetSide;
+            if (window.electronAPI?.setTabLock) window.electronAPI.setTabLock(next);
+          } catch (_) {}
+        };
+
+        if (tabLockRightBtn) {
+          tabLockRightBtn.addEventListener('click', async () => {
             try {
               setActiveSide('right'); // 明确目标为右侧
-              let next = 'right';
-              if (IS_ELECTRON && window.electronAPI?.getTabLock) {
-                const cur = await window.electronAPI.getTabLock();
-                next = (cur === 'right') ? null : 'right';
-              } else {
-                const cur = localStorage.getItem('tabLockSide');
-                next = (cur === 'right') ? null : 'right';
-                if (next) localStorage.setItem('tabLockSide', next); else localStorage.removeItem('tabLockSide');
-              }
-              if (IS_ELECTRON && window.electronAPI?.setTabLock) window.electronAPI.setTabLock(next);
-              renderTabLock(next);
+              await toggleLock('right');
               // 锁定后立即把焦点送到右侧，便于继续 Tab
               try { if (IS_ELECTRON && window.electronAPI?.focusEmbedded) setTimeout(()=>window.electronAPI.focusEmbedded(), 60); } catch (_) {}
+              // 再次强化分割线/地址栏可见状态，避免锁定时意外隐藏左侧竖线
+              try { if (typeof showBackButton === 'function') showBackButton(); } catch (_) {}
             } catch (_) {}
           });
         }
+        if (tabLockThirdBtn) {
+          tabLockThirdBtn.addEventListener('click', async () => {
+            try {
+              setActiveSide('third'); // 明确目标为第三屏
+              await toggleLock('third');
+              // 锁定后立即把焦点送到第三屏，便于继续 Tab
+              try { if (IS_ELECTRON && window.electronAPI?.focusThird) setTimeout(()=>window.electronAPI.focusThird(), 60); } catch (_) {}
+              try { if (typeof showBackButton === 'function') showBackButton(); } catch (_) {}
+            } catch (_) {}
+          });
+        }
+      }
+
+      // 第三屏地址栏事件处理
+      if (addressInputThird && addressGoThird && window.electronAPI) {
+        addressGoThird.addEventListener('click', handleAddressNavigationThird);
+        addressInputThird.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); handleAddressNavigationThird(); }
+        });
       }
       
       // 返回按钮点击：关闭当前活动的右侧/第三屏
       backBtn.addEventListener('click', () => {
         if (window.electronAPI?.closeActivePane) {
-          try { window.electronAPI.closeActivePane(__activeSide); } catch (_) {}
+          // Return 始终回到左侧主屏：同时关闭右侧和第三屏
+          try { window.electronAPI.closeActivePane('all'); } catch (_) {}
         } else if (window.electronAPI?.closeEmbeddedBrowser) {
           window.electronAPI.closeEmbeddedBrowser();
         }
@@ -2275,7 +2493,11 @@ const initializeBar = async () => {
           const r2 = Math.max(0.05, Math.min(0.9, w2 / rf));
           if (window.electronAPI?.setThreeSplitRatios) window.electronAPI.setThreeSplitRatios(r1, r2);
           try { localStorage.setItem('threeSplitR1', String(r1)); localStorage.setItem('threeSplitR2', String(r2)); } catch (_) {}
+          // 三分屏拖动时，同时更新中间与第三屏地址栏的位置
           updateAddressBarPosition();
+          try {
+            if (typeof updateAddressBarThirdPosition === 'function') updateAddressBarThirdPosition();
+          } catch (_) {}
         };
         
         document.addEventListener('mousemove', handleMouseMove);
@@ -2357,25 +2579,46 @@ const initializeBar = async () => {
           thirdDivider?.addEventListener('mousedown', () => setActiveSide('third'));
         } catch (_) {}
         
-        // 内嵌浏览器打开时，恢复保存的分屏比例
-        window.electronAPI.onEmbeddedBrowserOpened?.(() => {
-          setTimeout(() => {
-            try {
-              if (__threeScreenMode) {
-                updateDividerPositionsForThree();
-              } else {
-                const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
-                updateDividerPosition(savedRatio);
-                if (window.electronAPI?.setSplitRatio) {
-                  window.electronAPI.setSplitRatio(savedRatio);
-                }
-                console.log('[Split Divider] Restored ratio on open:', savedRatio);
+      // 内嵌浏览器打开时，恢复保存的分屏比例
+      window.electronAPI.onEmbeddedBrowserOpened?.(() => {
+        setTimeout(() => {
+          try {
+            if (__threeScreenMode) {
+              updateDividerPositionsForThree();
+            } else {
+              const savedRatio = parseFloat(localStorage.getItem('splitRatio') || '0.5');
+              updateDividerPosition(savedRatio);
+              if (window.electronAPI?.setSplitRatio) {
+                window.electronAPI.setSplitRatio(savedRatio);
               }
-            } catch (e) {
-              console.error('[Split Divider] Error restoring ratio:', e);
+              console.log('[Split Divider] Restored ratio on open:', savedRatio);
             }
-          }, 100);
-        });
+          } catch (e) {
+            console.error('[Split Divider] Error restoring ratio:', e);
+          }
+        }, 100);
+      });
+
+      // 启动时向主进程询问当前是否已经处于分屏/三分屏模式
+      // 这样即使 embedded-browser-opened 事件在脚本加载前就发生，也能补一次 UI 状态，
+      // 避免首次打开时出现“已经三屏但分割线缺失”的情况。
+      try {
+        if (IS_ELECTRON && window.electronAPI?.getSplitState) {
+          window.electronAPI.getSplitState().then((state) => {
+            try {
+              if (!state) return;
+              const isEmbedded = !!state.isEmbedded;
+              const isThree = !!state.isThree;
+              if (isThree && !__threeScreenMode) {
+                toggleThreeScreenMode(true);
+              }
+              if (isEmbedded || isThree) {
+                showBackButton();
+              }
+            } catch (_) {}
+          });
+        }
+      } catch (_) {}
       }
     }
   } catch (_) {}

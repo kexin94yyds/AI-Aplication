@@ -78,6 +78,25 @@ npm start
 - 尝试重启应用
 - 检查开发者控制台是否有错误信息（npm run dev）
 
+### 加载外部站点出现 SSL/TLS 错误（ERR_CONNECTION_CLOSED / 握手失败）？
+- 现象：控制台看到类似日志
+  - `handshake failed; returned -1, SSL error code 1, net_error -100`
+  - `Failed to load URL: https://gemini.google.com/app with error: ERR_CONNECTION_CLOSED`
+- 常见原因：某些网络/公司代理/安全网关对最新版的 TLS 特性（如 ECH、HTTPS SVCB 记录、TLS1.3）兼容不佳，或对 Electron/Chromium 的网络栈处理存在差异。
+- 解决建议（按需启用，默认关闭）：
+  1) 启用网络兼容模式（禁用 ECH/SVCB/QUIC 且将最小 TLS 版本设为 1.2）
+     - macOS/Linux:
+       - `AISB_NET_COMPAT=1 npm run dev`
+       - 或 `AISB_NET_COMPAT=1 npm start`
+  2) 仅禁用 ECH/SVCB：
+       - `AISB_DISABLE_ECH=1 npm run dev`
+  3) 记录 Chromium 网络日志，便于排查：
+       - `AISB_NETLOG=/tmp/netlog.json npm run dev`
+  4) 临时忽略证书错误（仅调试使用，勿在生产环境）：
+       - `AISB_IGNORE_CERT_ERRORS=1 npm run dev`
+
+提示：如果在 Chrome/Edge 中可正常访问，而在本应用中报上述错误，通常是网络设备/代理对 Electron 的新 TLS/DNS 特性兼容性问题。启用第 1 条“网络兼容模式”最常见可解。
+
 ## 打包与发布
 
 ### 快速打包
@@ -200,4 +219,3 @@ open dist/AI\ Sidebar-*.dmg
 5. ⏳ 添加系统托盘
 6. ⏳ 自动更新功能
 7. ⏳ 代码签名和公证
-

@@ -49,6 +49,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   navigateEmbeddedBrowser: (url) => {
     ipcRenderer.send('navigate-embedded-browser', url);
   },
+  // 第三屏浏览器导航与事件
+  navigateThirdBrowser: (url) => {
+    ipcRenderer.send('navigate-third-browser', url);
+  },
+  onThirdBrowserUrlChanged: (callback) => {
+    ipcRenderer.on('third-browser-url-changed', (event, data) => callback(data));
+  },
   setSplitRatio: (ratio) => {
     ipcRenderer.send('set-split-ratio', ratio);
   },
@@ -71,6 +78,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onThirdClosed: (callback) => {
     ipcRenderer.on('third-screen-closed', () => callback && callback());
+  },
+  onThirdOpened: (callback) => {
+    ipcRenderer.on('third-screen-opened', (event, data) => { try { callback && callback(data); } catch (_) {} });
   },
   // 左侧导航栏宽度（用于让出 BrowserView 左边距）
   setSidebarWidth: (px) => {
@@ -129,6 +139,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     try { ipcRenderer.send('set-top-inset', Math.max(0, Math.floor(px||0))); } catch (_) {}
   },
 
+  // 查询当前是否处于分屏/三分屏模式（用于渲染层初始化时同步 UI 状态）
+  getSplitState: () => {
+    return new Promise((resolve) => {
+      try {
+        ipcRenderer.once('split-state', (event, payload) => {
+          try {
+            const safe = payload && typeof payload === 'object' ? payload : {};
+            resolve({
+              isEmbedded: !!safe.isEmbedded,
+              isThree: !!safe.isThree
+            });
+          } catch (_) {
+            resolve({ isEmbedded: false, isThree: false });
+          }
+        });
+        ipcRenderer.send('get-split-state');
+      } catch (_) {
+        resolve({ isEmbedded: false, isThree: false });
+      }
+    });
+  },
+
   // 覆盖模式：临时隐藏 BrowserView，让面板真正浮在上面
   enterOverlay: () => { try { ipcRenderer.send('overlay-enter'); } catch(_){} },
   exitOverlay: () => { try { ipcRenderer.send('overlay-exit'); } catch(_){} },
@@ -163,9 +195,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     } catch (_) {}
   },
 
-  // Tab 锁定（将 Tab/Shift+Tab 强制绑定到某一侧；传入 'left' | 'right' | null）
+  // Tab 锁定（将 Tab/Shift+Tab 强制绑定到某一侧；传入 'left' | 'right' | 'third' | null）
   setTabLock: (side) => {
-    try { ipcRenderer.send('set-tab-lock', side === 'left' ? 'left' : (side === 'right' ? 'right' : null)); } catch (_) {}
+    try {
+      const s =
+        side === 'left' ? 'left'
+        : side === 'right' ? 'right'
+        : side === 'third' ? 'third'
+        : null;
+      ipcRenderer.send('set-tab-lock', s);
+    } catch (_) {}
   },
   getTabLock: () => new Promise((resolve) => {
     const handler = (event, payload) => { try { resolve((payload && payload.side) || null); } catch (_) { resolve(null); } finally { ipcRenderer.removeListener('tab-lock-changed', handler); } };
