@@ -2337,7 +2337,23 @@ const initializeBar = async () => {
       const alignBtn = document.getElementById('alignBtn');
       if (alignBtn) {
         alignBtn.addEventListener('click', () => {
-          showAlignModal();
+          // Toggle 截图多屏同步模式（视觉与 Lock 类似）
+          try {
+            const nowOn = !alignBtn.classList.contains('align-active');
+            if (nowOn) {
+              alignBtn.classList.add('align-active');
+              alignBtn.textContent = 'Aligned';
+            } else {
+              alignBtn.classList.remove('align-active');
+              alignBtn.textContent = 'Align';
+            }
+            try {
+              if (IS_ELECTRON && window.electronAPI?.setAlignScreenshotMode) {
+                window.electronAPI.setAlignScreenshotMode(nowOn);
+              }
+            } catch (_) {}
+          } catch (_) {}
+          // 如需多 AI 发送弹窗，可在此处调用 showAlignModal()
         });
       }
       

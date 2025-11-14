@@ -215,6 +215,13 @@ html {
   color: #3730a3;
 }
 
+/* Align 按钮激活状态：与 Lock 风格保持一致 */
+#alignBtn.align-active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
 .address-bar-wrapper #addressGo:hover,
 .address-bar-wrapper #addressGoThird:hover {
   background: #f8fafc;

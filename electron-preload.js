@@ -126,6 +126,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 主动请求聚焦 BrowserView 中的提示输入框
   focusPrompt: () => { try { ipcRenderer.send('focus-prompt'); } catch (_) {} },
+
+  // 截图多屏同步模式（Align 开关）
+  setAlignScreenshotMode: (enabled) => {
+    try { ipcRenderer.send('set-align-screenshot-mode', !!enabled); } catch (_) {}
+  },
   onFocusPromptResult: (cb) => { ipcRenderer.on('focus-prompt-result', (e, res) => { try { cb(res); } catch (_) {} }); },
   
   

@@ -84,6 +84,8 @@ let lastWindowPosition = null; // 存储上次窗口位置 { x, y }
 let lastShowAt = 0; // 记录最近一次显示时间，用于忽略刚显示时的 blur
 let isInsertingText = false; // 标记是否正在插入文本，防止窗口位置被意外修改
 let windowPositionLock = false; // 窗口位置锁定标志，防止在特定操作时位置被改变
+// 截图是否启用“多屏同步插入”模式（由渲染层 Align 按钮控制）
+let alignScreenshotMode = false;
 
 // 统一获取“当前可注入的 AI 视图”
 // 逻辑：优先最近聚焦的视图；分屏时若右侧有焦点则返回右侧，否则返回左侧；
@@ -1966,16 +1968,15 @@ async function captureScreen() {
   }
 }
 
-async function insertImageIntoCurrentView(dataUrl) {
-  const view = getActiveAiView();
+// 将截图图片插入到指定 BrowserView 的输入框中
+async function insertImageIntoView(view, dataUrl) {
   if (!view || !view.webContents) return { ok:false, error:'no-view' };
-  try { view.webContents.focus(); } catch (_) {}
   try {
+    const realDataUrl = String(dataUrl || '');
     const result = await view.webContents.executeJavaScript(`
       (async function() {
         try {
-          const dataUrl = ${JSON.stringify('')};
-          const real = ${JSON.stringify(dataUrl)};
+          const real = ${JSON.stringify(realDataUrl)};
           const resp = await fetch(real);
           const blob = await resp.blob();
           const file = new File([blob], 'screenshot-' + Date.now() + '.png', { type: blob.type || 'image/png' });
@@ -2054,6 +2055,47 @@ async function insertImageIntoCurrentView(dataUrl) {
     if (result && result.ok) return result;
     // 兜底用系统级粘贴
     try { view.webContents.paste(); return { ok:true, method:'system-paste' }; } catch (e) { return { ok:false, error:String(e) }; }
+  } catch (e) {
+    return { ok:false, error:String(e) };
+  }
+}
+
+// 将截图图片插入到“当前活动”的 BrowserView 输入框中
+async function insertImageIntoCurrentView(dataUrl) {
+  const view = getActiveAiView();
+  return insertImageIntoView(view, dataUrl);
+}
+
+// 将同一张截图图片插入到当前所有可见的 AI 视图（左 / 右 / 第三屏）中
+async function insertImageIntoAllActiveViews(dataUrl) {
+  try {
+    const leftView = getLeftAiView();
+    const rightView = getRightAiView();
+    const thirdView = (isThreeScreenMode && thirdBrowserView) ? thirdBrowserView : null;
+
+    const pairs = [];
+    if (leftView) pairs.push({ side: 'left', view: leftView });
+    if (rightView && rightView !== leftView) pairs.push({ side: 'right', view: rightView });
+    if (thirdView && thirdView !== leftView && thirdView !== rightView) {
+      pairs.push({ side: 'third', view: thirdView });
+    }
+
+    if (!pairs.length) {
+      const single = await insertImageIntoCurrentView(dataUrl);
+      return { ok: !!(single && single.ok), results: single ? [single] : [] };
+    }
+
+    const results = [];
+    for (const { side, view } of pairs) {
+      const r = await insertImageIntoView(view, dataUrl);
+      results.push({ side, ...(r || { ok:false, error:'unknown' }) });
+    }
+    const anyOk = results.some(r => r.ok);
+    return {
+      ok: anyOk,
+      error: anyOk ? undefined : (results[0] && results[0].error) || 'all-failed',
+      results
+    };
   } catch (e) {
     return { ok:false, error:String(e) };
   }
@@ -2552,6 +2594,14 @@ async function submitInView(view) {
   }
 }
 
+// 截图多屏同步模式：渲染层通过 Align 按钮控制
+ipcMain.on('set-align-screenshot-mode', (event, enabled) => {
+  try {
+    alignScreenshotMode = !!enabled;
+    console.log('[AlignScreenshot] mode =', alignScreenshotMode ? 'ON' : 'OFF');
+  } catch (_) {}
+});
+
 
 
 // renderer 请求截屏
@@ -2563,7 +2613,9 @@ ipcMain.on('capture-screenshot', async () => {
   try { mainWindow?.setContentProtection(false); } catch (_) {}
   if (!shot) { mainWindow?.webContents.send('screenshot-error', 'capture-failed'); return; }
   mainWindow.webContents.send('screenshot-captured', { ...shot, autoPasted: true });
-  const res = await insertImageIntoCurrentView(shot.dataUrl);
+  const res = alignScreenshotMode
+    ? await insertImageIntoAllActiveViews(shot.dataUrl)
+    : await insertImageIntoCurrentView(shot.dataUrl);
   mainWindow.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
 });
 
@@ -2763,7 +2815,9 @@ app.whenReady().then(() => {
     if (!isShowing) showWindow();
     if (!shot) { mainWindow?.webContents.send('screenshot-error', 'capture-failed'); return; }
     mainWindow?.webContents.send('screenshot-captured', { ...shot, autoPasted: true });
-    const res = await insertImageIntoCurrentView(shot.dataUrl);
+    const res = alignScreenshotMode
+      ? await insertImageIntoAllActiveViews(shot.dataUrl)
+      : await insertImageIntoCurrentView(shot.dataUrl);
     mainWindow?.webContents.send('screenshot-auto-paste-result', res.ok ? { ok:true } : { ok:false, error: res.error||'unknown' });
   });
   if (!gotShot) console.error('截图快捷键注册失败:', screenshotKey);
@@ -2822,36 +2876,42 @@ app.whenReady().then(() => {
       const leftView = getLeftAiView();
       const rightView = getRightAiView();
       const thirdView = (isThreeScreenMode && thirdBrowserView) ? thirdBrowserView : null;
-      if (!leftView) { console.warn('[Align] No left view'); return; }
+      const activeView = getActiveAiView() || leftView || rightView || thirdView;
+      if (!activeView) { console.warn('[Align] No active view for Align'); return; }
 
-      // Read text from left prompt
-      const text = await getPromptTextFromView(leftView);
+      // Read text from the active side (left / right / third)
+      const text = await getPromptTextFromView(activeView);
       if (!text || !text.trim()) {
-        console.warn('[Align] No prompt text detected on the left');
+        console.warn('[Align] No prompt text detected on active side');
         return;
       }
 
-      // First, send on the left as well
-      try { await submitInView(leftView); } catch (_) {}
+      // First, send on the active side itself（连同该侧已有的图片）
+      try { await submitInView(activeView); } catch (_) {}
 
-      // Inject into right and send (if available)
-      if (rightView) {
-        const ins = await insertTextIntoView(rightView, text);
-        if (ins && ins.ok) { try { await submitInView(rightView); } catch (_) {} }
-        else { console.warn('[Align] Failed to inject into right:', ins && ins.error); }
+      // Broadcast to the other sides (whichever exist)
+      const targets = [];
+      if (leftView && leftView !== activeView) targets.push(leftView);
+      if (rightView && rightView !== activeView) targets.push(rightView);
+      if (thirdView && thirdView !== activeView) targets.push(thirdView);
+
+      for (const view of targets) {
+        try {
+          const ins = await insertTextIntoView(view, text);
+          if (ins && ins.ok) { try { await submitInView(view); } catch (_) {} }
+          else { console.warn('[Align] Failed to inject into target:', ins && ins.error); }
+        } catch (e) {
+          console.warn('[Align] Exception while broadcasting to target:', e);
+        }
       }
 
-      // Inject into third and send (if available)
-      if (thirdView) {
-        const ins3 = await insertTextIntoView(thirdView, text);
-        if (ins3 && ins3.ok) { try { await submitInView(thirdView); } catch (_) {} }
-        else { console.warn('[Align] Failed to inject into third:', ins3 && ins3.error); }
-      }
-
-      // Focus右或第三，优先第三
+      // Focus一个“非源侧”的视图，优先第三，其次右侧
       try {
-        if (thirdView) { thirdView.webContents.focus(); lastFocusedBrowserView = thirdView; }
-        else if (rightView) { rightView.webContents.focus(); lastFocusedBrowserView = rightView; }
+        if (thirdView && thirdView !== activeView) {
+          thirdView.webContents.focus(); lastFocusedBrowserView = thirdView;
+        } else if (rightView && rightView !== activeView) {
+          rightView.webContents.focus(); lastFocusedBrowserView = rightView;
+        }
       } catch (_) {}
     } catch (e) {
       console.error('Align (Cmd+Shift+A) failed:', e);
