@@ -662,6 +662,46 @@ function historyProviderLabel(key) {
   const m = PROVIDERS[key];
   return (m && m.label) || key;
 }
+// For history/favorites lists, derive a human-friendly source label.
+// 优先使用 provider（ChatGPT、Google 等），如果没有，再根据 URL 显示站点名称（例如 YouTube）。
+function historySourceLabel(entry) {
+  try {
+    if (!entry) return '';
+    const url = entry.url || '';
+    if (!url) return '';
+    const u = new URL(url);
+    const host = (u.hostname || '').replace(/^www\./, '').toLowerCase();
+    if (!host) return '';
+
+    // 1) 特殊站点：YouTube 一律显示为 "YouTube"，无论 provider 字段是什么
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be') {
+      return 'YouTube';
+    }
+
+    const key = entry.provider || '';
+    const base = historyProviderLabel(key);
+    if (base) {
+      // 2) 仅当 provider 的主机名与当前 URL 匹配时，才使用 provider 名称
+      try {
+        const p = PROVIDERS[key];
+        if (p) {
+          const candidate = (p.baseUrl || p.iframeUrl || p.url || '').trim();
+          if (candidate) {
+            const phost = new URL(candidate).hostname.replace(/^www\./, '').toLowerCase();
+            if (phost && phost === host) {
+              return base;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 3) 兜底：使用域名作为站点标注
+    return host;
+  } catch (_) {
+    return '';
+  }
+}
 function normalizeUrlAttr(s) {
   if (!s) return s;
   // Decode common HTML entity for '&' to match stored URL
@@ -711,6 +751,7 @@ async function renderHistoryPanel() {
       // 如果该 URL 已经被收藏，则优先使用 Favorites 中的名称，保证历史与收藏显示一致。
       const normUrl = normalizeUrlForMatch(it.url);
       const favTitle = favTitleByNorm[normUrl] || '';
+      const providerLabel = historySourceLabel(it);
       // Always show an informative title. If storage carries needsTitle with empty title,
       // fall back to a derived title so the row never appears blank.
       const baseTitle = (it && it.title && it.title.trim())
@@ -722,7 +763,7 @@ async function renderHistoryPanel() {
       const starClass = isStarred ? 'hp-star active' : 'hp-star';
       const starTitle = isStarred ? 'Unstar' : 'Star';
       return `<div class="hp-item" data-url="${escapeAttr(it.url)}">
-        <span class="hp-provider">${historyProviderLabel(it.provider||'')}</span>
+        <span class="hp-provider">${providerLabel}</span>
         <span class="hp-title" data-url="${escapeAttr(it.url)}" title="${escTitle}">${escTitle}</span>
         <span class="hp-time">${ds}</span>
         <span class="hp-actions">
@@ -768,7 +809,7 @@ async function renderHistoryPanel() {
           (customProviders || []).forEach((c) => { ALL[c.key] = c; });
 
           if (providerKey && ALL[providerKey]) {
-            // 这条历史有明确的 provider（左侧图标），按原有逻辑在左侧主视图中打开
+            // 这条历史有明确的 provider（左侧图标），按与 Favorites 一致的逻辑在左侧主视图中打开
             await setProvider(providerKey);
             const p = effectiveConfig(ALL, providerKey, overrides);
 
@@ -805,16 +846,15 @@ async function renderHistoryPanel() {
             renderProviderTabs(providerKey);
             await updateStarButtonState();
           } else {
-            // 没有 provider（例如 YouTube 等普通网页），在右侧内嵌浏览器打开
-            if (IS_ELECTRON && window.electronAPI) {
+            // 没有 provider（例如 YouTube 等普通网页）：
+            // 与 Favorites 打开方式保持一致——在左侧主视图中全屏展示，而不是右侧内嵌浏览器。
+            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
               try {
-                if (window.electronAPI.openEmbeddedBrowser) {
-                  window.electronAPI.openEmbeddedBrowser(url);
-                } else if (window.electronAPI.navigateEmbeddedBrowser) {
-                  window.electronAPI.navigateEmbeddedBrowser(url);
-                }
+                // 使用动态 provider key（如 'web'），交给主进程创建 BrowserView
+                const key = providerKey || 'web';
+                window.electronAPI.switchProvider({ key, url });
+                setActiveSide('left');
               } catch (_) {}
-              try { setActiveSide('right'); } catch (_) {}
             } else {
               // 浏览器扩展环境：退化为在新标签页打开
               try { window.open(url, '_blank', 'noopener'); } catch (_) {}
@@ -1096,8 +1136,9 @@ async function renderFavoritesPanel() {
         ? it.title
         : (deriveTitle(it.provider, it.url, '') || ''));
       const escTitle = titleToShow.replace(/[<>]/g,'');
+      const providerLabel = historySourceLabel(it);
       return `<div class="fp-item" data-url="${it.url}">
-        <span class="fp-provider">${historyProviderLabel(it.provider||'')}</span>
+        <span class="fp-provider">${providerLabel}</span>
         <span class="fp-title" data-url="${it.url}" title="${escTitle}">${escTitle}</span>
         <span class="fp-time">${ds}</span>
         <span class="fp-actions-row">
@@ -1135,26 +1176,23 @@ async function renderFavoritesPanel() {
           // 确保恢复 BrowserView，再进行跳转
           try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
           
-          // Load the URL in the sidebar
+          // Load the URL in the main (left) view, same behavior as History "Open"
           const container = document.getElementById('iframe');
           const overrides = await getOverrides();
           const customProviders = await loadCustomProviders();
           const ALL = { ...PROVIDERS };
           (customProviders || []).forEach((c) => { ALL[c.key] = c; });
           
-          // Switch to the provider if specified, otherwise stay on current
           if (providerKey && ALL[providerKey]) {
             await setProvider(providerKey);
             const p = effectiveConfig(ALL, providerKey, overrides);
             
-            // Update the Open in Tab button
             const openInTab = document.getElementById('openInTab');
             if (openInTab) {
               openInTab.dataset.url = url;
               try { openInTab.title = url; } catch (_) {}
             }
             
-            // Load the frame
             if (p.authCheck) {
               const auth = await p.authCheck();
               if (auth.state === 'authorized') {
@@ -1166,33 +1204,38 @@ async function renderFavoritesPanel() {
               await ensureFrame(container, providerKey, p);
             }
             
-            // Navigate to the URL
             if (IS_ELECTRON && window.electronAPI?.switchProvider) {
-              // Electron: use IPC to navigate BrowserView
-              window.electronAPI.switchProvider({ key: providerKey, url: url });
+              window.electronAPI.switchProvider({ key: providerKey, url });
             } else {
-              // Browser extension: navigate iframe
               const frame = cachedFrames[providerKey];
               if (frame && frame.contentWindow) {
                 try {
                   frame.contentWindow.location.href = url;
                 } catch (err) {
-                  // Fallback: reload frame with new URL
                   frame.src = url;
                 }
               }
             }
             
-            // Update UI
             renderProviderTabs(providerKey);
-            // Update Star button state for the newly opened URL
             await updateStarButtonState();
+          } else {
+            // 没有 provider（例如 YouTube 等普通网页）：在左侧主视图中全屏打开
+            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
+              try {
+                const key = providerKey || 'web';
+                window.electronAPI.switchProvider({ key, url });
+                setActiveSide('left');
+              } catch (_) {}
+            } else {
+              try { window.open(url, '_blank', 'noopener'); } catch (_) {}
+            }
           }
           
           // Close the favorites panel（并保证退出覆盖模式）
           try { document.getElementById('favoritesBackdrop')?.remove(); } catch (_) {}
           panel.style.display = 'none';
-        } catch (err) {
+       } catch (err) {
           console.error('Error opening favorite in sidebar:', err);
         }
       });
