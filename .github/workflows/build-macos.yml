@@ -1,0 +1,56 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build macOS app
+        run: npm run dist -- --mac
+        env:
+          # 防止 electron-builder 误认为要发布到 GitHub Release
+          CI: false
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Sidebar-macOS-DMG
+          path: |
+            dist/*.dmg
+          if-no-files-found: warn
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Sidebar-macOS-ZIP
+          path: |
+            dist/*.zip
+          if-no-files-found: warn
+
+      - name: Upload unpacked app
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Sidebar-macOS-Unpacked
+          path: |
+            dist/mac/**
+          if-no-files-found: warn
+
