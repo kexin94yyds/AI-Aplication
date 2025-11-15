@@ -2196,16 +2196,13 @@ const initializeBar = async () => {
         });
       } catch (_) {}
       
-      // 监听内嵌浏览器URL变化，更新地址栏
+      // 监听内嵌浏览器URL变化，更新地址栏并写入统一历史记录
       if (addressInput && window.electronAPI) {
         window.electronAPI.onEmbeddedBrowserUrlChanged?.((data) => {
-          if (data && data.url && addressInput) {
-            addressInput.value = data.url;
-          }
-          // 记录右侧当前 URL 与 provider（通过 URL 猜测）；
-          // 注意：URL 变化可能是站点内部跳转，不代表用户将要用右侧切换，
-          // 因此不再在这里切换“活动侧”，只更新紫色指示即可。
           try {
+            if (data && data.url && addressInput) {
+              addressInput.value = data.url;
+            }
             if (data && data.url) {
               __rightCurrentUrl = data.url;
               const k = guessProviderKeyByUrl(data.url);
@@ -2213,15 +2210,28 @@ const initializeBar = async () => {
                 __rightCurrentProvider = k;
                 highlightProviderOnTabs(k);
               }
+              const providerKey = k || '';
+              const title = data.title || '';
+              addHistory({ url: data.url, provider: providerKey, title });
             }
           } catch (_) {}
         });
       }
 
-      // 监听第三屏 URL 变化，更新第三屏地址栏
+      // 监听第三屏 URL 变化，更新第三屏地址栏并写入统一历史记录
       if (addressInputThird && window.electronAPI?.onThirdBrowserUrlChanged) {
         window.electronAPI.onThirdBrowserUrlChanged((data) => {
-          try { if (data && data.url && addressInputThird) addressInputThird.value = data.url; } catch (_) {}
+          try {
+            if (data && data.url && addressInputThird) {
+              addressInputThird.value = data.url;
+            }
+            if (data && data.url) {
+              const k = guessProviderKeyByUrl(data.url);
+              const providerKey = k || '';
+              const title = data.title || '';
+              addHistory({ url: data.url, provider: providerKey, title });
+            }
+          } catch (_) {}
         });
       }
       

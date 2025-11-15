@@ -4,6 +4,173 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 
+// ============== Gemini 标题解析脚本（在 BrowserView 内执行） ==============
+// 复用扩展里的逻辑，在 gemini.google.com 中尽可能获取“对话标题”，而不是纯数字 ID 或泛化标题。
+const GEMINI_TITLE_SCRIPT = `(function () {
+  try {
+    if (location.origin !== 'https://gemini.google.com') return null;
+
+    const deepFind = (root, predicate, max) => {
+      try {
+        const q = [root];
+        let seen = 0;
+        const limit = typeof max === 'number' ? max : 2000;
+        while (q.length && seen < limit) {
+          const n = q.shift();
+          seen++;
+          if (!n) continue;
+          try { if (predicate(n)) return n; } catch (_) {}
+          try { if (n.shadowRoot) q.push(n.shadowRoot); } catch (_) {}
+          try { if (n.children && n.children.length) q.push(...n.children); } catch (_) {}
+        }
+      } catch (_) {}
+      return null;
+    };
+
+    const resolveGeminiHref = () => {
+      try {
+        if (location.origin !== 'https://gemini.google.com') return null;
+        const anchor = deepFind(document, (el) => {
+          if (!(el && el.tagName === 'A')) return false;
+          const h = el.getAttribute('href') || '';
+          if (!h) return false;
+          const abs = h.startsWith('http') ? h : new URL(h, location.origin).href;
+          return /^https:\\/\\/gemini\\.google\\.com\\/app\\//.test(abs) && abs !== 'https://gemini.google.com/app';
+        });
+        if (anchor) {
+          const h = anchor.getAttribute('href');
+          const abs = h && h.startsWith('http') ? h : (h ? new URL(h, location.origin).href : '');
+          return abs || null;
+        }
+        const share = deepFind(document, (n)=> n && (n.getAttribute && (n.getAttribute('data-clipboard-text') || n.getAttribute('data-share-url'))));
+        if (share) {
+          const v = share.getAttribute('data-clipboard-text') || share.getAttribute('data-share-url');
+          if (v && /^https:\\/\\/gemini\\.google\\.com\\/app\\//.test(v)) return v;
+        }
+      } catch (_) {}
+      return null;
+    };
+
+    const geminiIdFromUrl = (uStr) => {
+      try {
+        const u = new URL(uStr || location.href, location.origin);
+        const m = u.pathname.match(/\\/app\\/(?:conversation\\/)?([^\\/?#]+)/);
+        return m && m[1] ? m[1] : '';
+      } catch (_) { return ''; }
+    };
+
+    const notUseful = (t) => {
+      if (!t) return true;
+      const s = t.trim().toLowerCase();
+      return (
+        s.length === 0 ||
+        s === 'recent' || s === 'gemini' || s === 'google gemini' ||
+        s === 'conversation with gemini' ||
+        s === 'new chat' || s === 'start a new chat' ||
+        /^(新?聊天|新?对话|最近)$/.test(s)
+      );
+    };
+
+    const resolveGeminiTitle = () => {
+      try {
+        const canonical = resolveGeminiHref() || location.href;
+        const convId = geminiIdFromUrl(canonical);
+
+        if (convId) {
+          const link = deepFind(document, (el)=> el && el.tagName === 'A' && (el.getAttribute('href')||'').includes('/app/' + convId));
+          if (link && link.textContent && !notUseful(link.textContent)) {
+            return link.textContent.trim();
+          }
+        }
+
+        const hasConvTitleClass = (el) => {
+          try { return el && el.classList && Array.from(el.classList).some(c => /conversation-title/i.test(c)); } catch (_) { return false; }
+        };
+        const navScope = deepFind(document, (el)=> el && (el.tagName==='NAV' || el.tagName==='ASIDE' || (el.getAttribute && el.getAttribute('role')==='navigation')));
+        if (navScope) {
+          const activeTitle = deepFind(navScope, (el)=> {
+            if (!hasConvTitleClass(el) || !el.textContent || !el.textContent.trim()) return false;
+            const container = el.closest('[aria-selected=\"true\"], [aria-current=\"page\"], [data-active=\"true\"], [data-selected=\"true\"], [class*=\"active\"], [class*=\"selected\"]');
+            return !!container;
+          });
+          if (activeTitle && activeTitle.textContent && !notUseful(activeTitle.textContent)) {
+            return activeTitle.textContent.trim();
+          }
+          const inNav = deepFind(navScope, (el)=> hasConvTitleClass(el) && el.textContent && el.textContent.trim().length > 0);
+          if (inNav && inNav.textContent && !notUseful(inNav.textContent)) {
+            return inNav.textContent.trim();
+          }
+        }
+
+        const globalTitle = deepFind(document, (el)=> hasConvTitleClass(el) && el.textContent && el.textContent.trim().length > 0);
+        if (globalTitle && globalTitle.textContent && !notUseful(globalTitle.textContent)) {
+          return globalTitle.textContent.trim();
+        }
+
+        const selected = deepFind(document, (el)=> el && el.getAttribute && (el.getAttribute('aria-selected')==='true' || el.getAttribute('aria-current')==='page'));
+        if (selected && selected.textContent && !notUseful(selected.textContent)) {
+          return selected.textContent.trim();
+        }
+
+        const header = deepFind(document, (el)=>{
+          if (!el) return false;
+          const role = el.getAttribute && el.getAttribute('role');
+          const tag = (el.tagName||'').toLowerCase();
+          if (tag === 'h1') return true;
+          if (role === 'heading' && (el.getAttribute('aria-level')==='1' || el.getAttribute('aria-level')==='2')) return true;
+          if (tag === 'h2' && el.closest && el.closest('header')) return true;
+          return false;
+        });
+        if (header && header.textContent && !notUseful(header.textContent)) {
+          return header.textContent.trim();
+        }
+
+        const og = document.querySelector('meta[property=\"og:title\"], meta[name=\"og:title\"]');
+        if (og && og.content && !notUseful(og.content)) {
+          return og.content.trim();
+        }
+
+        const roots = Array.from(document.querySelectorAll('main, [role=\"main\"], body'));
+        const goodText = (txt) => {
+          if (!txt) return false;
+          const t = txt.replace(/\\s+/g, ' ').trim();
+          if (t.length < 8) return false;
+          if (t.length > 140) return false;
+          if (notUseful(t)) return false;
+          if (/^gemini\\s+for\\s+/i.test(t)) return false;
+          return true;
+        };
+        for (const r of roots) {
+          try {
+            const walker = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT, null);
+            let count = 0;
+            while (walker.nextNode() && count < 800) {
+              count++;
+              const el = walker.currentNode;
+              if (!el) continue;
+              const tag = (el.tagName||'').toLowerCase();
+              if (['nav','aside','button','svg','img','input','textarea','select','script','style'].includes(tag)) continue;
+              if (el.getAttribute && (el.getAttribute('role') === 'listitem' || el.getAttribute('role') === 'article')) {
+                const t = (el.textContent||'').trim();
+                if (goodText(t)) return t;
+              }
+              if (tag === 'p' || tag === 'li') {
+                const t = (el.textContent||'').trim();
+                if (goodText(t)) return t;
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+      return null;
+    };
+
+    return resolveGeminiTitle() || document.title || null;
+  } catch (_) {
+    return null;
+  }
+})();`;
+
 // ============== 网络兼容性选项（可选） ==============
 // 某些网络/代理设备（尤其是不支持 ECH/HTTPS SVCB 或对 TLS1.3 有兼容性问题的环境）
 // 可能导致特定站点（如 gemini.google.com）在 Electron/Chromium 中握手失败（ERR_CONNECTION_CLOSED/-100）。
@@ -588,6 +755,32 @@ function getOrCreateBrowserView(providerKey) {
     view.webContents.setUserAgent(ua.replace(/ Electron\/[0-9.]+/, ''));
   } catch (_) {}
 
+  // Helper: 将 BrowserView 的 URL + 标题发送给渲染进程，对 Gemini 使用定制标题解析
+  const emitProviderUrlChanged = () => {
+    try {
+      const url = view.webContents.getURL();
+      if (!url) return;
+      const fallbackTitle = view.webContents.getTitle() || '';
+      const send = (title) => {
+        if (!mainWindow) return;
+        mainWindow.webContents.send('browserview-url-changed', {
+          providerKey,
+          url,
+          title: title || fallbackTitle
+        });
+      };
+      let host = '';
+      try { host = new URL(url).hostname; } catch (_) {}
+      if (host === 'gemini.google.com') {
+        view.webContents.executeJavaScript(GEMINI_TITLE_SCRIPT, true)
+          .then((t) => send(t || fallbackTitle))
+          .catch(() => send(fallbackTitle));
+      } else {
+        send(fallbackTitle);
+      }
+    } catch (_) {}
+  };
+
   // 跟踪焦点：点击该视图后，后续刷新将定向到它
   try {
     view.webContents.on('focus', () => { lastFocusedBrowserView = view; lastTabTargetSide = 'left'; });
@@ -603,54 +796,28 @@ function getOrCreateBrowserView(providerKey) {
   // 加载 URL
   view.webContents.loadURL(provider.url);
 
-  // 监听 URL 变化，同步到渲染进程
+  // 监听 URL / 标题变化，同步到渲染进程
   view.webContents.on('did-navigate', (event, url) => {
     console.log(`BrowserView navigated: ${providerKey} - ${url}`);
-    if (mainWindow) {
-      mainWindow.webContents.send('browserview-url-changed', {
-        providerKey,
-        url,
-        title: view.webContents.getTitle()
-      });
-    }
+    emitProviderUrlChanged();
   });
 
   view.webContents.on('did-navigate-in-page', (event, url) => {
     console.log(`BrowserView in-page navigation: ${providerKey} - ${url}`);
-    if (mainWindow) {
-      mainWindow.webContents.send('browserview-url-changed', {
-        providerKey,
-        url,
-        title: view.webContents.getTitle()
-      });
-    }
+    emitProviderUrlChanged();
   });
 
   // 监听页面标题变化
-  view.webContents.on('page-title-updated', (event, title) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('browserview-url-changed', {
-        providerKey,
-        url: view.webContents.getURL(),
-        title
-      });
-    }
+  view.webContents.on('page-title-updated', () => {
+    emitProviderUrlChanged();
   });
 
   // 调试日志
   view.webContents.on('did-finish-load', () => {
     console.log(`BrowserView loaded: ${providerKey} - ${provider.url}`);
     // 加载完成后也发送一次 URL
-    if (mainWindow) {
-      mainWindow.webContents.send('browserview-url-changed', {
-        providerKey,
-        url: view.webContents.getURL(),
-        title: view.webContents.getTitle()
-      });
-    }
-    
+    emitProviderUrlChanged();
     // 链接拦截主要通过 will-navigate 事件处理，这里不需要注入脚本
-    // 注入脚本可能会干扰正常的链接行为，移除它
   });
 
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
@@ -1477,20 +1644,41 @@ function openEmbeddedBrowser(url, opts = {}) {
         embeddedBrowserView.webContents.setUserAgent(ua2.replace(/ Electron\/[0-9.]+/, ''));
       } catch (_) {}
 
+      // Helper: 向渲染进程广播当前 URL 与标题，便于地址栏与历史记录使用网页标题
+      const emitEmbeddedUrlChanged = () => {
+        try {
+          const url = embeddedBrowserView?.webContents.getURL();
+          if (!url) return;
+          const fallbackTitle = embeddedBrowserView?.webContents.getTitle() || '';
+          const send = (title) => {
+            console.log('[Embedded Browser] URL changed:', url, 'title:', title || fallbackTitle);
+            mainWindow?.webContents.send('embedded-browser-url-changed', { url, title: title || fallbackTitle });
+          };
+          let host = '';
+          try { host = new URL(url).hostname; } catch (_) {}
+          if (host === 'gemini.google.com') {
+            embeddedBrowserView.webContents.executeJavaScript(GEMINI_TITLE_SCRIPT, true)
+              .then((t) => send(t || fallbackTitle))
+              .catch(() => send(fallbackTitle));
+          } else {
+            send(fallbackTitle);
+          }
+        } catch (_) {}
+      };
+
       // 监听导航事件
-      embeddedBrowserView.webContents.on('did-navigate', (event, navigationUrl) => {
-        console.log('[Embedded Browser] Navigated to:', navigationUrl);
-        mainWindow?.webContents.send('embedded-browser-url-changed', { url: navigationUrl });
+      embeddedBrowserView.webContents.on('did-navigate', () => {
+        emitEmbeddedUrlChanged();
       });
 
-      embeddedBrowserView.webContents.on('did-navigate-in-page', (event, navigationUrl) => {
-        console.log('[Embedded Browser] In-page navigation to:', navigationUrl);
-        mainWindow?.webContents.send('embedded-browser-url-changed', { url: navigationUrl });
+      embeddedBrowserView.webContents.on('did-navigate-in-page', () => {
+        emitEmbeddedUrlChanged();
       });
 
       // 监听加载完成
       embeddedBrowserView.webContents.on('did-finish-load', () => {
         console.log('[Embedded Browser] Page loaded');
+        try { emitEmbeddedUrlChanged(); } catch (_) {}
         mainWindow?.webContents.send('embedded-browser-loaded');
       });
     }
@@ -1722,19 +1910,35 @@ function ensureThirdView(partition = thirdBrowserPartition) {
     const ua3 = thirdBrowserView.webContents.getUserAgent();
     thirdBrowserView.webContents.setUserAgent(ua3.replace(/ Electron\/[0-9.]+/, ''));
   } catch (_) {}
-  // 监听第三屏 URL 变化，便于同步地址栏
+  // 监听第三屏 URL 变化，便于同步地址栏和历史记录（带网页标题）
   try {
-    thirdBrowserView.webContents.on('did-navigate', (event, url) => {
-      try { mainWindow?.webContents.send('third-browser-url-changed', { url }); } catch (_) {}
+    const emitThirdUrlChanged = () => {
+      try {
+        const url = thirdBrowserView?.webContents.getURL();
+        if (!url) return;
+        const fallbackTitle = thirdBrowserView?.webContents.getTitle() || '';
+        const send = (title) => {
+          mainWindow?.webContents.send('third-browser-url-changed', { url, title: title || fallbackTitle });
+        };
+        let host = '';
+        try { host = new URL(url).hostname; } catch (_) {}
+        if (host === 'gemini.google.com') {
+          thirdBrowserView.webContents.executeJavaScript(GEMINI_TITLE_SCRIPT, true)
+            .then((t) => send(t || fallbackTitle))
+            .catch(() => send(fallbackTitle));
+        } else {
+          send(fallbackTitle);
+        }
+      } catch (_) {}
+    };
+    thirdBrowserView.webContents.on('did-navigate', () => {
+      emitThirdUrlChanged();
     });
-    thirdBrowserView.webContents.on('did-navigate-in-page', (event, url) => {
-      try { mainWindow?.webContents.send('third-browser-url-changed', { url }); } catch (_) {}
+    thirdBrowserView.webContents.on('did-navigate-in-page', () => {
+      emitThirdUrlChanged();
     });
     thirdBrowserView.webContents.on('did-finish-load', () => {
-      try {
-        const url = thirdBrowserView.webContents.getURL();
-        mainWindow?.webContents.send('third-browser-url-changed', { url });
-      } catch (_) {}
+      emitThirdUrlChanged();
     });
   } catch (_) {}
   // 监听键盘：Tab/刷新
