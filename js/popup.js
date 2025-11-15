@@ -157,11 +157,12 @@ const PROVIDERS = {
 
 // Debug logging helper (set to false to silence in production)
 const DEBUG = true;
-// 镜像模式：Electron 应用从插件的 sync/*.json 读取数据（只读模式）
-// 浏览器插件则正常写入 sync/*.json（写入模式）
-// 这样实现：浏览器插件 → sync 文件 → Electron 应用 的数据流
-const SYNC_MIRROR_FROM_PLUGIN = IS_ELECTRON; // Electron=只读，插件=写入
-try { window.AI_SYNC_WRITE_ENABLED = !SYNC_MIRROR_FROM_PLUGIN; } catch (_) {}
+// 同步模式：
+// - 历史记录：Chrome 插件和 AI 浏览器各自独立，不再通过 sync/history.json 互相覆盖
+// - 收藏（favorites）：仍通过 sync/favorites.json 在插件与 AI 浏览器之间双向同步
+const SYNC_MIRROR_FROM_PLUGIN = false;
+// 关闭 HistoryDB 对 sync/history.json 的写入，避免插件与桌面端互相覆盖
+try { window.AI_SYNC_WRITE_ENABLED = false; } catch (_) {}
 const dbg = (...args) => { try { if (DEBUG) console.log('[AISidebar]', ...args); } catch (_) {} };
 
 // Custom provider helpers (for Add AI)
@@ -656,14 +657,27 @@ async function renderHistoryPanel() {
     const list = await loadHistory();
     const favList = await loadFavorites();
     const favSet = new Set((favList||[]).map(x=> normalizeUrlForMatch(x.url)));
+    const favTitleByNorm = {};
+    (favList || []).forEach((f) => {
+      try {
+        const norm = normalizeUrlForMatch(f.url);
+        if (!norm) return;
+        const t = (f && typeof f.title === 'string') ? f.title.trim() : '';
+        if (t) favTitleByNorm[norm] = t;
+      } catch (_) {}
+    });
     const rows = (list || []).map((it)=>{
       const date = new Date(it.time||Date.now());
       const ds = date.toLocaleString();
+      // 如果该 URL 已经被收藏，则优先使用 Favorites 中的名称，保证历史与收藏显示一致。
+      const normUrl = normalizeUrlForMatch(it.url);
+      const favTitle = favTitleByNorm[normUrl] || '';
       // Always show an informative title. If storage carries needsTitle with empty title,
       // fall back to a derived title so the row never appears blank.
-      const titleToShow = clampTitle((it && it.title && it.title.trim())
+      const baseTitle = (it && it.title && it.title.trim())
         ? it.title
-        : (deriveTitle(it.provider, it.url, '') || ''));
+        : (deriveTitle(it.provider, it.url, '') || '');
+      const titleToShow = clampTitle(favTitle || baseTitle);
       const escTitle = titleToShow.replace(/[<>]/g,'');
       const isStarred = favSet.has(normalizeUrlForMatch(it.url));
       const starClass = isStarred ? 'hp-star active' : 'hp-star';
@@ -991,11 +1005,6 @@ async function loadFavorites() {
 }
 async function saveFavorites(list) {
   try { await chrome.storage?.local.set({ [FAVORITES_KEY]: list }); } catch (_) {}
-  try {
-    if (!SYNC_MIRROR_FROM_PLUGIN && IS_ELECTRON && window.electronAPI?.sync?.write) {
-      window.electronAPI.sync.write('favorites', list || []);
-    }
-  } catch (_) {}
 }
 
 async function saveFavoritesLocalOnly(list) {
@@ -3463,12 +3472,10 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onBrowserViewUrlChan
       if (currentProvider === providerKey) {
         // 更新 Star 按钮状态
         updateStarButtonState();
-        
-        // 镜像模式下不自动追加历史，保持与插件一致
-        if (!SYNC_MIRROR_FROM_PLUGIN) {
-          if (isDeepLink(providerKey, url)) {
-            addHistory({ url, provider: providerKey, title: title || '' });
-          }
+
+        // 在 Electron BrowserView 下，当检测到深度链接时自动追加到历史记录
+        if (isDeepLink(providerKey, url)) {
+          addHistory({ url, provider: providerKey, title: title || '' });
         }
       }
     });
@@ -4074,35 +4081,9 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
 // ============== 与插件目录的文件同步（导入 + 监听） ==============
 (async function syncImportFromExternalIfAny(){
   try {
-    if (!(IS_ELECTRON && window.electronAPI && window.electronAPI.sync)) return;
-    // 初次导入：Favorites（镜像）
-    try {
-      const extFavs = await window.electronAPI.sync.read('favorites');
-      if (Array.isArray(extFavs)) {
-        await saveFavoritesLocalOnly(extFavs);
-      }
-    } catch (_) {}
-    // 初次导入：History（镜像）
-    try {
-      const extHist = await window.electronAPI.sync.read('history');
-      if (Array.isArray(extHist) && window.HistoryDB && HistoryDB.replace) {
-        await HistoryDB.replace(extHist);
-      }
-    } catch (_) {}
-    // 监听文件变更（镜像覆盖）
-    try {
-      window.electronAPI.sync.onUpdated?.(async (name, data) => {
-        try {
-          if (name === 'favorites' && Array.isArray(data)) {
-            await saveFavoritesLocalOnly(data);
-            await updateStarButtonState();
-          }
-          if (name === 'history' && Array.isArray(data) && window.HistoryDB) {
-            await HistoryDB.replace(data);
-          }
-        } catch (_) {}
-      });
-    } catch (_) {}
+    // 目前扩展和桌面应用的历史与收藏都改为各自独立存储；
+    // 不再在 Electron 端通过文件与 Chrome 插件同步，避免互相覆盖或干扰。
+    return;
   } catch (_) {}
 })();
 

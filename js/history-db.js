@@ -53,15 +53,17 @@
   }
 
   async function clearAll() {
-    const r = await withStore('readwrite', (os) => os.clear());
-    try { if (window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.write) window.electronAPI.sync.write('history', []); } catch (_) {}
-    return r;
+    return await withStore('readwrite', (os) => os.clear());
   }
 
-  async function replace(list) {
+  async function replace(list, opts) {
+    const options = opts || {};
     // Replace full contents with provided array of entries
-    await clearAll();
-    if (!Array.isArray(list) || list.length === 0) return [];
+    if (!Array.isArray(list) || list.length === 0) {
+      // Clear store only；不再写入共享 sync 文件，历史改为本地独立存储
+      await withStore('readwrite', (os) => os.clear());
+      return [];
+    }
     // Dedup by url, keep newest first
     const seen = new Set();
     const trimmed = [];
@@ -77,11 +79,10 @@
       if (trimmed.length >= MAX_ENTRIES) break;
     }
     await withStore('readwrite', (os) => {
+      try { os.clear(); } catch (_) {}
       trimmed.forEach(e => os.put(e));
     });
-    const out = await getAll();
-    try { if (window.AI_SYNC_WRITE_ENABLED && window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.write) window.electronAPI.sync.write('history', out); } catch (_) {}
-    return out;
+    return await getAll();
   }
 
   async function add(entry) {
@@ -111,9 +112,7 @@
     }));
     // Enforce cap: if above MAX_ENTRIES, prune oldest
     await pruneIfNeeded();
-    const out = await getAll();
-    try { if (window.AI_SYNC_WRITE_ENABLED && window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.write) window.electronAPI.sync.write('history', out); } catch (_) {}
-    return out;
+    return await getAll();
   }
 
   async function pruneIfNeeded() {
