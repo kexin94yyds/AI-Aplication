@@ -1681,6 +1681,13 @@ function openEmbeddedBrowser(url, opts = {}) {
         try { emitEmbeddedUrlChanged(); } catch (_) {}
         mainWindow?.webContents.send('embedded-browser-loaded');
       });
+
+      // 监听页面标题变化（用于单页应用，如 YouTube 视频页在加载后才更新 title）
+      try {
+        embeddedBrowserView.webContents.on('page-title-updated', () => {
+          emitEmbeddedUrlChanged();
+        });
+      } catch (_) {}
     }
     // 键盘拦截：确保在右侧获得焦点时，Cmd/Ctrl+R 只刷新右侧视图
     try {
@@ -1940,6 +1947,13 @@ function ensureThirdView(partition = thirdBrowserPartition) {
     thirdBrowserView.webContents.on('did-finish-load', () => {
       emitThirdUrlChanged();
     });
+
+    // 监听页面标题变化（例如 YouTube 视频在加载后异步更新 title）
+    try {
+      thirdBrowserView.webContents.on('page-title-updated', () => {
+        emitThirdUrlChanged();
+      });
+    } catch (_) {}
   } catch (_) {}
   // 监听键盘：Tab/刷新
   try {

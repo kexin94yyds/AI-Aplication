@@ -496,7 +496,23 @@ function escapeAttr(s) {
 function deriveTitle(provider, url, rawTitle) {
   try {
     const label = historyProviderLabel(provider) || '';
-    const t = (rawTitle || '').trim();
+    let t = (rawTitle || '').trim();
+
+    // 针对通用网页（特别是 YouTube 视频链接）做一点标题净化：
+    // - 如果 URL 指向 youtube.com / youtu.be
+    // - 且标题形如「Some Video Title - YouTube」
+    //   则去掉结尾的「- YouTube」，保留真正的视频标题，方便在历史记录中识别。
+    try {
+      if (url && t) {
+        const u = new URL(url);
+        const host = (u.hostname || '').replace(/^www\./, '').toLowerCase();
+        if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be') {
+          const cleaned = t.replace(/\s*-\s*YouTube$/i, '').trim();
+          if (cleaned) t = cleaned;
+        }
+      }
+    } catch (_) {}
+
     // Filter out generic or unhelpful titles
     const blacklist = ['recent','google gemini','gemini','conversation with gemini'];
     if (t && !blacklist.includes(t.toLowerCase())) {
@@ -528,6 +544,29 @@ function clampTitle(s, max = TITLE_MAX_LEN) {
     if (str.length <= max) return str;
     return str.slice(0, Math.max(0, max - 1)) + '…';
   } catch (_) { return s; }
+}
+
+// 针对右侧/第三屏内嵌浏览器的网页标题做简单清洗：
+// - 优先保留站点自己给出的标题，不再用 provider 名或路径推断；
+// - 对 YouTube 链接，将「Some Title - YouTube」裁剪为「Some Title」。
+function normalizeWebHistoryTitle(url, rawTitle) {
+  try {
+    let t = (rawTitle || '').trim();
+    if (!t) return '';
+    try {
+      if (url) {
+        const u = new URL(url);
+        const host = (u.hostname || '').replace(/^www\./, '').toLowerCase();
+        if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be') {
+          const cleaned = t.replace(/\s*-\s*YouTube$/i, '').trim();
+          if (cleaned) t = cleaned;
+        }
+      }
+    } catch (_) {}
+    return clampTitle(t);
+  } catch (_) {
+    return clampTitle(rawTitle || '');
+  }
 }
 
 // loadHistory是异步函数，用于加载历史会话数据（即AI聊天历史）。
@@ -722,26 +761,23 @@ async function renderHistoryPanel() {
           // 确保恢复 BrowserView，再进行跳转
           try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
           
-          // Load the URL in the sidebar
           const container = document.getElementById('iframe');
           const overrides = await getOverrides();
           const customProviders = await loadCustomProviders();
           const ALL = { ...PROVIDERS };
           (customProviders || []).forEach((c) => { ALL[c.key] = c; });
-          
-          // Switch to the provider if specified, otherwise stay on current
+
           if (providerKey && ALL[providerKey]) {
+            // 这条历史有明确的 provider（左侧图标），按原有逻辑在左侧主视图中打开
             await setProvider(providerKey);
             const p = effectiveConfig(ALL, providerKey, overrides);
-            
-            // Update the Open in Tab button
+
             const openInTab = document.getElementById('openInTab');
             if (openInTab) {
               openInTab.dataset.url = url;
               try { openInTab.title = url; } catch (_) {}
             }
-            
-            // Load the frame
+
             if (p.authCheck) {
               const auth = await p.authCheck();
               if (auth.state === 'authorized') {
@@ -752,28 +788,37 @@ async function renderHistoryPanel() {
             } else {
               await ensureFrame(container, providerKey, p);
             }
-            
-            // Navigate to the URL
+
             if (IS_ELECTRON && window.electronAPI?.switchProvider) {
-              // Electron: use IPC to navigate BrowserView
-              window.electronAPI.switchProvider({ key: providerKey, url: url });
+              window.electronAPI.switchProvider({ key: providerKey, url });
             } else {
-              // Browser extension: navigate iframe
               const frame = cachedFrames[providerKey];
               if (frame && frame.contentWindow) {
                 try {
                   frame.contentWindow.location.href = url;
                 } catch (err) {
-                  // Fallback: reload frame with new URL
                   frame.src = url;
                 }
               }
             }
-            
-            // Update UI
+
             renderProviderTabs(providerKey);
-            // Update Star button state for the newly opened URL
             await updateStarButtonState();
+          } else {
+            // 没有 provider（例如 YouTube 等普通网页），在右侧内嵌浏览器打开
+            if (IS_ELECTRON && window.electronAPI) {
+              try {
+                if (window.electronAPI.openEmbeddedBrowser) {
+                  window.electronAPI.openEmbeddedBrowser(url);
+                } else if (window.electronAPI.navigateEmbeddedBrowser) {
+                  window.electronAPI.navigateEmbeddedBrowser(url);
+                }
+              } catch (_) {}
+              try { setActiveSide('right'); } catch (_) {}
+            } else {
+              // 浏览器扩展环境：退化为在新标签页打开
+              try { window.open(url, '_blank', 'noopener'); } catch (_) {}
+            }
           }
           
           // Close the history panel（并保证退出覆盖模式）
@@ -800,16 +845,31 @@ async function renderHistoryPanel() {
         e.stopPropagation(); // Prevent event bubbling
         const url = e.currentTarget.getAttribute('data-url');
         const isActive = e.currentTarget.classList.contains('active');
-        const provider = (await getProvider())||'chatgpt';
+        const toolbarProvider = (await getProvider())||'chatgpt';
         const normalizedUrl = normalizeUrlForMatch(url);
         if (isActive) {
           // Unstar
           const favs = await loadFavorites();
           await saveFavorites(favs.filter((x)=> normalizeUrlForMatch(x.url) !== normalizedUrl));
         } else {
-          // Star - no inline edit, just add to favorites silently
-          const suggested = (currentTitleByProvider[provider] || document.title || '').trim();
-          await addFavorite({ url, provider, title: suggested, needsTitle: false });
+          // Star：优先使用当前这条历史记录自己的标题，而不是左侧 Provider 的标题，
+          // 以免把 YouTube 等网页标题覆盖成「ChatGPT xxx」。
+          let provider = toolbarProvider;
+          let suggested = '';
+          try {
+            const list = await loadHistory();
+            const found = (list || []).find((x)=> normalizeUrlForMatch(x.url) === normalizedUrl);
+            if (found) {
+              if (found.provider) provider = found.provider;
+              if (found.title) suggested = String(found.title || '').trim();
+            }
+          } catch (_) {}
+          if (!suggested) {
+            const fallback = (currentTitleByProvider[toolbarProvider] || document.title || '').trim();
+            suggested = normalizeWebHistoryTitle(url, fallback) || fallback;
+          }
+          // needsTitle: true => addFavorite 将直接使用我们给定的标题，不再调用 deriveTitle
+          await addFavorite({ url, provider, title: suggested, needsTitle: true });
         }
         // Update history panel to show new star state
         renderHistoryPanel();
@@ -2211,8 +2271,10 @@ const initializeBar = async () => {
                 highlightProviderOnTabs(k);
               }
               const providerKey = k || '';
-              const title = data.title || '';
-              addHistory({ url: data.url, provider: providerKey, title });
+              const title = normalizeWebHistoryTitle(data.url, data.title || '');
+              // needsTitle: true 表示直接使用网页自己的标题，不再用 deriveTitle 推断，
+              // 避免后续被左侧 Provider 标题覆盖，保证右侧视频/网页标题稳定。
+              addHistory({ url: data.url, provider: providerKey, title, needsTitle: true });
             }
           } catch (_) {}
         });
@@ -2228,8 +2290,8 @@ const initializeBar = async () => {
             if (data && data.url) {
               const k = guessProviderKeyByUrl(data.url);
               const providerKey = k || '';
-              const title = data.title || '';
-              addHistory({ url: data.url, provider: providerKey, title });
+              const title = normalizeWebHistoryTitle(data.url, data.title || '');
+              addHistory({ url: data.url, provider: providerKey, title, needsTitle: true });
             }
           } catch (_) {}
         });
