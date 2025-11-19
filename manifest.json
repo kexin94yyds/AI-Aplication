@@ -64,7 +64,9 @@
     "https://grok.com/*",
     "https://mubu.com/*",
     "https://*.mubu.com/*",
-    "https://excalidraw.com/*"
+    "https://excalidraw.com/*",
+    "https://kimi.moonshot.cn/*",
+    "https://*.moonshot.cn/*"
   ],
 
   "content_scripts": [
@@ -100,7 +102,9 @@
         "https://grok.com/*",
         "https://mubu.com/*",
         "https://*.mubu.com/*",
-        "https://excalidraw.com/*"
+        "https://excalidraw.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://*.moonshot.cn/*"
       ],
       "all_frames": true,
       "run_at": "document_end",

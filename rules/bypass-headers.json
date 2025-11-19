@@ -178,5 +178,20 @@
       "urlFilter": "https://chat.deepseek.com/*",
       "resourceTypes": ["sub_frame"]
     }
+  },
+  {
+    "id": 13,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "X-Frame-Options", "operation": "remove" },
+        { "header": "Content-Security-Policy", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "https://kimi.moonshot.cn/*",
+      "resourceTypes": ["sub_frame"]
+    }
   }
 ]

@@ -4328,3 +4328,95 @@ async function sendMessageToProviders(message, providerKeys) {
     setInterval(removeIndicator, 500);
   } catch (_) {}
 })();
+
+// ====================================================================================
+// 覆盖模式背景处理（截图伪装）
+// ====================================================================================
+try {
+  if (window.electronAPI && window.electronAPI.onOverlayBackground) {
+    window.electronAPI.onOverlayBackground((images) => {
+      console.log('[Overlay] Received background images:', images);
+      
+      // 获取或创建背景容器
+      let bg = document.getElementById('overlay-fake-bg');
+      if (!bg) {
+        bg = document.createElement('div');
+        bg.id = 'overlay-fake-bg';
+        // 放在 body 最底层
+        bg.style.position = 'fixed';
+        bg.style.inset = '0';
+        bg.style.zIndex = '0'; // 确保在工具栏(z=100)之下，在面板(z=2147483646)之下
+        bg.style.pointerEvents = 'none';
+        bg.style.display = 'flex';
+        bg.style.backgroundColor = '#ffffff'; // 默认底色
+        document.body.insertBefore(bg, document.body.firstChild);
+      }
+      
+      bg.innerHTML = '';
+      bg.style.display = 'flex';
+
+      // 辅助函数：添加图片块
+      const addImg = (dataUrl, flexGrow) => {
+        const div = document.createElement('div');
+        div.style.flex = flexGrow + ' 1 0';
+        div.style.height = '100%';
+        div.style.position = 'relative';
+        div.style.overflow = 'hidden';
+        
+        if (dataUrl) {
+          div.style.backgroundImage = `url(${dataUrl})`;
+          div.style.backgroundSize = 'cover'; // 使用 cover 或 100% 100%
+          // 对于 BrowserView capturePage，通常是整个可见区域，所以用 100% 100% 可能更准确
+          div.style.backgroundSize = '100% 100%'; 
+          div.style.backgroundPosition = 'left top';
+          div.style.backgroundRepeat = 'no-repeat';
+        } else {
+          div.style.backgroundColor = '#ffffff'; // 占位白底
+        }
+        bg.appendChild(div);
+      };
+
+      const hasLeft = !!images.left;
+      const hasRight = !!images.right;
+      const hasThird = !!images.third;
+
+      // 根据图片数量推断布局
+      if (hasThird) {
+        // 三分屏：假设各占 1/3 (实际可能有自定义比例，但截图通常是按 View 截的)
+        // TODO: 如果能获取 split ratios 更好，但这里为了简化直接均分或按截图比例？
+        // BrowserView 的 capturePage 返回的是该 View 的全部内容。
+        // 如果我们用 flex: 1，它们会均分屏幕。如果之前是 30%/70% 布局，这里会变成 50%/50% 导致变形。
+        // 这是一个瑕疵。
+        // 改进：使用 flex-basis 和之前的比例。
+        // 但我们无法轻易获取比例。
+        // 暂时使用 flex: 1，对于大多数用户（50/50）是正确的。
+        addImg(images.left, 1);
+        addImg(images.right, 1);
+        addImg(images.third, 1);
+      } else if (hasRight) {
+        // 二分屏
+        addImg(images.left, 1);
+        addImg(images.right, 1);
+      } else {
+        // 单屏
+        addImg(images.left, 1);
+      }
+    });
+
+    // 监听覆盖模式退出，清除背景
+    if (window.electronAPI.onOverlayState) {
+      window.electronAPI.onOverlayState((state) => {
+        if (state && state.action === 'exit' && state.depth === 0) {
+          const bg = document.getElementById('overlay-fake-bg');
+          if (bg) {
+            bg.style.display = 'none';
+            bg.innerHTML = ''; // 释放内存
+          }
+        }
+      });
+    }
+  }
+} catch (err) {
+  console.error('[Overlay] Setup error:', err);
+}
+
