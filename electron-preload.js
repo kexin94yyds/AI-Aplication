@@ -341,6 +341,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('maximize-changed', (event, isMaximized) => {
       callback(isMaximized);
     });
+  },
+  
+  // 关闭窗口
+  closeWindow: () => {
+    try {
+      ipcRenderer.send('close-window');
+    } catch (e) {
+      console.error('[Preload] closeWindow error:', e);
+    }
   }
 });
 

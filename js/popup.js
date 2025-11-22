@@ -1533,7 +1533,16 @@ const renderProviderTabs = async (currentProviderKey) => {
   if (!tabsContainer) return;
 
   const overrides = await getOverrides();
+  
+  // 保存关闭按钮（如果存在）
+  const closeBtn = tabsContainer.querySelector('.sidebar-close-btn');
+  
   tabsContainer.innerHTML = '';
+  
+  // 恢复关闭按钮
+  if (closeBtn) {
+    tabsContainer.appendChild(closeBtn);
+  }
 
   // 折叠状态与头部
   const collapsed = false; // 强制不折叠
@@ -3026,6 +3035,22 @@ const initializeBar = async () => {
 
     // Close with Escape
     document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') hideFavoritesPanel(); }, true);
+  } catch (_) {}
+
+  // Close button handler - hide window
+  try {
+    const closeBtn = document.getElementById('closeBtn');
+    if (closeBtn && IS_ELECTRON) {
+      closeBtn.addEventListener('click', () => {
+        try {
+          if (window.electronAPI && window.electronAPI.closeWindow) {
+            window.electronAPI.closeWindow();
+          }
+        } catch (err) {
+          console.error('Error closing window:', err);
+        }
+      });
+    }
   } catch (_) {}
 
   // Star button handler - toggle star for current page

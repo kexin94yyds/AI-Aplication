@@ -1407,7 +1407,7 @@ function showWindow() {
   lastShowAt = Date.now(); // 记录显示时间
   
   try { mainWindow.webContents.send('app-visibility', { state: 'shown', ts: Date.now() }); } catch (_) {}
-  
+
   // 3. 200ms 后还原工作区可见性，仅在当前 Space 可见
   setTimeout(() => {
     try {
@@ -1447,7 +1447,6 @@ function hideWindow() {
     new: lastWindowPosition,
     timestamp: Date.now()
   });
-  
   mainWindow.hide();
   isShowing = false;
   try { mainWindow.webContents.send('app-visibility', { state: 'hidden', ts: Date.now() }); } catch (_) {}
@@ -2978,6 +2977,16 @@ ipcMain.on('lock-window-position', (event, shouldLock) => {
   }
   
   event.reply('window-position-lock-status', windowPositionLock);
+});
+
+// 关闭窗口 - 直接退出应用
+ipcMain.on('close-window', () => {
+  try {
+    console.log('用户点击关闭按钮，退出应用');
+    app.quit();
+  } catch (e) {
+    console.error('退出应用失败:', e);
+  }
 });
 
 // 应用准备就绪

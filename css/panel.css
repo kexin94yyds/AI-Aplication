@@ -929,6 +929,42 @@ body.three-screen-mode #thirdDivider {
   display: none;
 }
 
+/* 左侧导航栏关闭按钮 - 固定在顶部 */
+#provider-tabs .sidebar-close-btn {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 18px;
+  position: relative;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+  margin-bottom: 8px;
+  opacity: 0.7;
+}
+#provider-tabs .sidebar-close-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  opacity: 1;
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.15);
+}
+#provider-tabs .sidebar-close-btn:active {
+  background: #fecaca;
+  color: #b91c1c;
+  transform: scale(1.0);
+  box-shadow: 0 1px 4px rgba(185, 28, 28, 0.2);
+}
+
 #provider-tabs button {
   flex: 0 0 44px;
   width: 44px;
