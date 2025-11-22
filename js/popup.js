@@ -1544,19 +1544,12 @@ const renderProviderTabs = async (currentProviderKey) => {
     tabsContainer.appendChild(closeBtn);
   }
 
-  // 折叠状态与头部
+  // 折叠状态
   const collapsed = false; // 强制不折叠
   tabsContainer.classList.remove('collapsed');
-  const header = document.createElement('div');
-  header.className = 'tabs-header';
-  // 移除折叠开关，避免误操作导致宽度变化
-  // （保留 header 节点以维持布局一致性）
-  tabsContainer.appendChild(header);
-
-  // 为 tabs-header 添加双击最大化/还原功能
-  header.addEventListener('dblclick', (e) => {
-    try { window.electronAPI.toggleFullWidth?.(); } catch (_) {}
-  });
+  
+  // 不再需要 tabs-header，避免占用空间
+  // 双击最大化功能移到 provider-tabs 容器本身
 
   // 获取所有提供商的顺序
   let providerOrder = await chrome.storage.local.get('providerOrder').then(r => r.providerOrder || Object.keys(PROVIDERS));

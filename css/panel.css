@@ -948,7 +948,7 @@ body.three-screen-mode #thirdDivider {
   position: relative;
   z-index: 10;
   -webkit-app-region: no-drag;
-  margin-bottom: 8px;
+  margin-bottom: 0;
   opacity: 0.7;
 }
 #provider-tabs .sidebar-close-btn:hover {
