@@ -1408,27 +1408,11 @@ function showWindow() {
   
   try { mainWindow.webContents.send('app-visibility', { state: 'shown', ts: Date.now() }); } catch (_) {}
 
-  // 3. 200ms 后还原工作区可见性，仅在当前 Space 可见
-  setTimeout(() => {
-    try {
-      const beforeRestorePos = mainWindow.getPosition();
-      console.log('[SHOW_WINDOW] 200ms后还原工作区可见性前位置:', { x: beforeRestorePos[0], y: beforeRestorePos[1] });
-      
-      mainWindow.setVisibleOnAllWorkspaces(false);
-      
-      // 🔍 验证：还原后检查位置
-      const afterRestorePos = mainWindow.getPosition();
-      const restoreDrift = { x: afterRestorePos[0] - beforeRestorePos[0], y: afterRestorePos[1] - beforeRestorePos[1] };
-      console.log('[SHOW_WINDOW] ✓ setVisibleOnAllWorkspaces(false) 后位置:', { 
-        before: { x: beforeRestorePos[0], y: beforeRestorePos[1] },
-        after: { x: afterRestorePos[0], y: afterRestorePos[1] },
-        drift: restoreDrift,
-        hasDrift: restoreDrift.x !== 0 || restoreDrift.y !== 0
-      });
-    } catch (e) {
-      console.error('还原工作区可见性失败:', e);
-    }
-  }, 200);
+  // 🔑 关键修复：不再还原工作区可见性
+  // 之前 200ms 后调用 setVisibleOnAllWorkspaces(false) 会导致窗口在全屏应用前面来回跳动
+  // 因为这会让窗口回到原来的 Space，而不是停留在当前全屏应用的 Space
+  // 保持 setVisibleOnAllWorkspaces(true) 可以让窗口始终覆盖在当前 Space（包括全屏应用）
+  console.log('[SHOW_WINDOW] 保持窗口在所有工作区可见（避免全屏应用前跳动）');
   
   console.log('窗口已显示，层级: floating（可交互）');
   console.log('[SHOW_WINDOW] ========== 显示完成 ==========');
@@ -2873,18 +2857,9 @@ ipcMain.on('toggle-always-on-top', (event) => {
   if (newState) {
     // 开启置顶：使用 screen-saver 层级，实现真正的"覆盖所有应用"
     try {
-      // 临时在所有工作区可见（包括全屏应用）
+      // 在所有工作区可见（包括全屏应用）- 保持这个状态以避免跳动
       mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      
-      // 200ms 后还原工作区可见性
-      setTimeout(() => {
-        try {
-          mainWindow.setVisibleOnAllWorkspaces(false);
-        } catch (e) {
-          console.error('还原工作区可见性失败:', e);
-        }
-      }, 200);
       
       console.log('Always on top: true (level: screen-saver) - 极端置顶模式');
     } catch (e) {
@@ -2897,7 +2872,8 @@ ipcMain.on('toggle-always-on-top', (event) => {
     // 关闭置顶：恢复 floating 层级（保持覆盖在当前应用上，但可交互）
     try {
       mainWindow.setAlwaysOnTop(true, 'floating');
-      mainWindow.setVisibleOnAllWorkspaces(false);
+      // 🔑 保持 setVisibleOnAllWorkspaces(true) 以避免在全屏应用前跳动
+      // 不再调用 setVisibleOnAllWorkspaces(false)
       console.log('Always on top: false -> floating (保持浮动，可交互)');
     } catch (e) {
       console.error('恢复 floating 失败:', e);
