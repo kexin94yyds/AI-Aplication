@@ -82,11 +82,26 @@ echo "  正在更新 Contents..."
 rm -rf "${TARGET_APP}/Contents"
 cp -R "${PACKED_CONTENTS}" "${TARGET_APP}/Contents"
 
+# 清理 Gatekeeper 隔离属性（防止开机后问题）
+if xattr -l "${TARGET_APP}" 2>/dev/null | grep -q "com.apple.quarantine"; then
+    xattr -dr com.apple.quarantine "${TARGET_APP}" 2>/dev/null || true
+    echo "  ✓ 已清除 Gatekeeper 隔离属性"
+fi
+
 # 清理旧备份（保留最近3个）
 BACKUP_COUNT=$(ls -d "${TARGET_APP}/Contents.backup."* 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 if [ "$BACKUP_COUNT" -gt 3 ]; then
     ls -dt "${TARGET_APP}/Contents.backup."* 2>/dev/null | tail -n +4 | xargs rm -rf 2>/dev/null || true
     echo "  保留最近3个备份"
+fi
+
+# 清理单实例锁文件（防止开机后问题）
+APP_SUPPORT_DIR="$HOME/Library/Application Support/AI Sidebar"
+if [ -d "$APP_SUPPORT_DIR" ]; then
+    rm -f "$APP_SUPPORT_DIR/SingletonLock" 2>/dev/null || true
+    rm -f "$APP_SUPPORT_DIR/SingletonCookie" 2>/dev/null || true
+    rm -f "$APP_SUPPORT_DIR/SingletonSocket" 2>/dev/null || true
+    echo "  ✓ 已清理单实例锁文件"
 fi
 
 echo "更新完成"
