@@ -587,8 +587,9 @@ html {
   padding: 10px 12px;
   border-bottom: 1px solid #eef2f7;
   font-weight: 600;
+  -webkit-app-region: no-drag; /* 确保按钮可点击，不被拖动区域拦截 */
 }
-.history-panel .hp-actions button {
+.history-panel .hp-header-actions button {
   margin-left: 8px;
   height: 24px;
   padding: 0 8px;

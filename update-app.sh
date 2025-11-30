@@ -5,6 +5,16 @@
 
 set -e  # 遇到错误立即退出
 
+# 快速模式：跳过清理dist，利用增量构建
+FAST_MODE=false
+SKIP_BACKUP=false
+for arg in "$@"; do
+    case $arg in
+        --fast|-f) FAST_MODE=true; SKIP_BACKUP=true ;;
+        --no-backup) SKIP_BACKUP=true ;;
+    esac
+done
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,10 +35,14 @@ echo -e "${YELLOW}[1/5] 停止正在运行的应用...${NC}"
 pkill -f "AI Sidebar" 2>/dev/null || echo "  没有运行中的应用"
 sleep 1
 
-# 2. 清理旧的打包文件
-echo -e "${YELLOW}[2/5] 清理旧的打包文件...${NC}"
-rm -rf dist
-echo "  ✓ 清理完成"
+# 2. 清理旧的打包文件（快速模式跳过）
+if [ "$FAST_MODE" = true ]; then
+    echo -e "${YELLOW}[2/5] 跳过清理（快速模式）${NC}"
+else
+    echo -e "${YELLOW}[2/5] 清理旧的打包文件...${NC}"
+    rm -rf dist
+    echo "  ✓ 清理完成"
+fi
 
 # 3. 打包应用
 echo -e "${YELLOW}[3/5] 开始打包应用...${NC}"
@@ -71,10 +85,13 @@ TARGET_APP="$1"
 BACKUP_DIR="$2"
 PACKED_CONTENTS="$3"
 
-# 备份旧的 Contents（如果存在）
-if [ -d "${TARGET_APP}/Contents" ]; then
+# 备份旧的 Contents（如果存在且未跳过）
+SKIP_BACKUP_FLAG="$4"
+if [ "$SKIP_BACKUP_FLAG" != "skip" ] && [ -d "${TARGET_APP}/Contents" ]; then
     echo "  备份旧版本到: ${BACKUP_DIR}"
     cp -R "${TARGET_APP}/Contents" "${BACKUP_DIR}" 2>/dev/null || echo "  备份失败"
+elif [ "$SKIP_BACKUP_FLAG" = "skip" ]; then
+    echo "  跳过备份（快速模式）"
 fi
 
 # 更新 Contents
@@ -110,7 +127,11 @@ SCRIPT_EOF
 chmod +x "$TEMP_SCRIPT"
 
 # 使用 osascript 执行临时脚本（只需输入一次密码）
-osascript -e "do shell script \"\\\"$TEMP_SCRIPT\\\" \\\"${TARGET_APP}\\\" \\\"${BACKUP_DIR}\\\" \\\"${PACKED_CONTENTS}\\\"\" with administrator privileges" 2>/dev/null
+SKIP_BACKUP_ARG=""
+if [ "$SKIP_BACKUP" = true ]; then
+    SKIP_BACKUP_ARG="skip"
+fi
+osascript -e "do shell script \"\\\"$TEMP_SCRIPT\\\" \\\"${TARGET_APP}\\\" \\\"${BACKUP_DIR}\\\" \\\"${PACKED_CONTENTS}\\\" \\\"${SKIP_BACKUP_ARG}\\\"\" with administrator privileges" 2>/dev/null
 
 UPDATE_RESULT=$?
 
@@ -139,6 +160,7 @@ echo ""
 echo "应用已更新到最新版本。"
 echo "你可以在应用程序中启动 'AI Sidebar' 来使用新版本。"
 echo ""
+echo -e "${YELLOW}提示: 使用 --fast 或 -f 参数可加速更新（跳过清理和备份）${NC}"
 
 
 

@@ -615,6 +615,61 @@ async function addHistory(entry) {
     return next;
   } catch (_) { return null; }
 }
+
+// ---- History Export/Import helpers ----
+async function exportHistory() {
+  try {
+    const list = await loadHistory();
+    const dataStr = JSON.stringify(list, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ai-sidebar-history-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('导出历史记录失败:', err);
+    alert('导出失败：' + String(err));
+  }
+}
+
+async function importHistory() {
+  try {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+      try {
+        const file = e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const imported = JSON.parse(text);
+        if (!Array.isArray(imported)) {
+          alert('无效的导入文件格式');
+          return;
+        }
+        const current = await loadHistory();
+        const currentUrls = new Set(current.map(x => normalizeUrlForMatch(x.url)));
+        const newItems = imported.filter(x => x && x.url && !currentUrls.has(normalizeUrlForMatch(x.url)));
+        const merged = [...newItems, ...current].slice(0, 500);
+        await saveHistory(merged);
+        renderHistoryPanel();
+        alert(`已导入 ${newItems.length} 条新记录`);
+      } catch (err) {
+        console.error('导入历史记录失败:', err);
+        alert('导入失败：' + String(err));
+      }
+    };
+    input.click();
+  } catch (err) {
+    console.error('导入历史记录失败:', err);
+    alert('导入失败：' + String(err));
+  }
+}
+
 function isDeepLink(providerKey, href) {
   try {
     if (!href) return false;
@@ -774,10 +829,12 @@ async function renderHistoryPanel() {
         </span>
       </div>`;
     }).join('');
-    panel.innerHTML = `<div class=\"hp-header\">\n      <span>History</span>\n      <span class=\"hp-actions\">\n        <button id=\"hp-add-current\">Add Current</button>\n        <button id=\"hp-clear-all\">Clear</button>\n        <button id=\"hp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"hp-search-row\">\n      <span class=\"hp-search-icon\"></span>\n      <input id=\"hp-search-input\" class=\"hp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"hp-list\">${rows || ''}</div>`;
+    panel.innerHTML = `<div class=\"hp-header\">\n      <span>History</span>\n      <span class=\"hp-header-actions\">\n        <button id=\"hp-add-current\">Add Current</button>\n        <button id=\"hp-export\">导出</button>\n        <button id=\"hp-import\">导入</button>\n        <button id=\"hp-clear-all\">Clear</button>\n        <button id=\"hp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"hp-search-row\">\n      <span class=\"hp-search-icon\"></span>\n      <input id=\"hp-search-input\" class=\"hp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"hp-list\">${rows || ''}</div>`;
     // events
     panel.querySelector('#hp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
     panel.querySelector('#hp-clear-all')?.addEventListener('click', async ()=>{ await saveHistory([]); renderHistoryPanel(); });
+    panel.querySelector('#hp-export')?.addEventListener('click', exportHistory);
+    panel.querySelector('#hp-import')?.addEventListener('click', importHistory);
     panel.querySelector('#hp-add-current')?.addEventListener('click', async ()=>{
       try {
         const a = document.getElementById('openInTab');
@@ -1124,6 +1181,60 @@ async function addFavorite(entry) {
   } catch (_) { return null; }
 }
 
+// ---- Favorites Export/Import helpers ----
+async function exportFavorites() {
+  try {
+    const list = await loadFavorites();
+    const dataStr = JSON.stringify(list, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ai-sidebar-favorites-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error('导出收藏失败:', err);
+    alert('导出失败：' + String(err));
+  }
+}
+
+async function importFavorites() {
+  try {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+      try {
+        const file = e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const imported = JSON.parse(text);
+        if (!Array.isArray(imported)) {
+          alert('无效的导入文件格式');
+          return;
+        }
+        const current = await loadFavorites();
+        const currentUrls = new Set(current.map(x => normalizeUrlForMatch(x.url)));
+        const newItems = imported.filter(x => x && x.url && !currentUrls.has(normalizeUrlForMatch(x.url)));
+        const merged = [...newItems, ...current].slice(0, 500);
+        await saveFavorites(merged);
+        renderFavoritesPanel();
+        alert(`已导入 ${newItems.length} 条新收藏`);
+      } catch (err) {
+        console.error('导入收藏失败:', err);
+        alert('导入失败：' + String(err));
+      }
+    };
+    input.click();
+  } catch (err) {
+    console.error('导入收藏失败:', err);
+    alert('导入失败：' + String(err));
+  }
+}
+
 async function renderFavoritesPanel() {
   try {
     const panel = document.getElementById('favoritesPanel');
@@ -1149,10 +1260,12 @@ async function renderFavoritesPanel() {
         </span>
       </div>`;
     }).join('');
-    panel.innerHTML = `<div class=\"fp-header\">\n      <span>Favorites</span>\n      <span class=\"fp-actions\">\n        <button id=\"fp-add-current\">Add Current</button>\n        <button id=\"fp-clear-all\">Clear</button>\n        <button id=\"fp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"fp-search-row\">\n      <span class=\"fp-search-icon\"></span>\n      <input id=\"fp-search-input\" class=\"fp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"fp-list\">${rows || ''}</div>`;
+    panel.innerHTML = `<div class=\"fp-header\">\n      <span>Favorites</span>\n      <span class=\"fp-actions\">\n        <button id=\"fp-add-current\">Add Current</button>\n        <button id=\"fp-export\">导出</button>\n        <button id=\"fp-import\">导入</button>\n        <button id=\"fp-clear-all\">Clear</button>\n        <button id=\"fp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"fp-search-row\">\n      <span class=\"fp-search-icon\"></span>\n      <input id=\"fp-search-input\" class=\"fp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"fp-list\">${rows || ''}</div>`;
 
     panel.querySelector('#fp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
     panel.querySelector('#fp-clear-all')?.addEventListener('click', async ()=>{ await saveFavorites([]); renderFavoritesPanel(); });
+    panel.querySelector('#fp-export')?.addEventListener('click', exportFavorites);
+    panel.querySelector('#fp-import')?.addEventListener('click', importFavorites);
     
     panel.querySelector('#fp-add-current')?.addEventListener('click', async ()=>{
       try {
