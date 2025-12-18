@@ -552,7 +552,8 @@ const PROVIDERS = {
   ima: { url: 'https://ima.qq.com', partition: 'persist:ima' },
   mubu: { url: 'https://mubu.com/app/edit/home/5zT4WuoDoc0', partition: 'persist:mubu' },
   excalidraw: { url: 'https://excalidraw.com', partition: 'persist:excalidraw' },
-  attention_local: { url: `file://${path.join(__dirname, 'vendor/attention/index.html')}`, partition: 'persist:attention' }
+  attention_local: { url: `file://${path.join(__dirname, 'vendor/attention/index.html')}`, partition: 'persist:attention' },
+  'v0': { url: 'https://v0.app/chat', partition: 'persist:v0' }
 };
 
 // 创建主窗口
@@ -630,6 +631,21 @@ function createWindow() {
       try { mainWindow.webContents.send('app-focus', { ts: Date.now() }); } catch (_) {}
       // 聚焦时补挂视图，避免白屏
       ensureBrowserViewsAttached('window-focus');
+      
+      // 🔍 关键修复：窗口获得焦点时，自动聚焦到 BrowserView 内部的输入框
+      // 这样外部应用（如 Prompter）激活 AI Sidebar 后，Cmd+V 能正确粘贴到输入框
+      setTimeout(() => {
+        try {
+          const view = getActiveAiView();
+          if (view && view.webContents) {
+            view.webContents.focus();
+            // 尝试聚焦到输入框（延迟执行，确保 BrowserView 已完全激活）
+            setTimeout(() => {
+              try { focusPromptInCurrentView(); } catch (_) {}
+            }, 50);
+          }
+        } catch (_) {}
+      }, 30);
     });
   } catch (_) {}
   

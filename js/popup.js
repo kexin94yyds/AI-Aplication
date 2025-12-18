@@ -92,7 +92,7 @@ const PROVIDERS = {
   },
   aistudio: {
     label: 'AI Studio',
-    icon: 'images/providers/google.png',
+    icon: 'images/providers/aistudio.png',
     baseUrl: 'https://aistudio.google.com',
     iframeUrl: 'https://aistudio.google.com/apps',
     authCheck: null
@@ -152,6 +152,13 @@ const PROVIDERS = {
     baseUrl: 'https://excalidraw.com',
     iframeUrl: 'https://excalidraw.com/',
     authCheck: null // Excalidraw 无需登录
+  },
+  'v0': {
+    label: 'v0',
+    icon: 'images/providers/v0.svg',
+    baseUrl: 'https://v0.app',
+    iframeUrl: 'https://v0.app/chat',
+    authCheck: null
   }
 };
 
