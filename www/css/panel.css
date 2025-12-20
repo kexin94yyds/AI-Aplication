@@ -1,0 +1,1548 @@
+/* General Reset */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* 统一的颜色变量 - 减少重复定义 */
+  --btn-blue-start: #5a84ff;
+  --btn-blue-end: #436af7;
+  --btn-blue-border: #395fe0;
+  --btn-blue-shadow: rgba(67, 106, 247, 0.35);
+  --btn-text: #ffffff;
+  
+  /* 通用颜色 */
+  --bg-white: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --border-light: #e5e7eb;
+  --border-hover: #dbe1e8;
+  --bg-hover: #f3f7ff;
+  --bg-active: #e8f0fe;
+  --shadow-light: rgba(15, 23, 42, 0.08);
+  --shadow-medium: rgba(15, 23, 42, 0.18);
+  
+  /* 侧向高亮颜色（左=蓝，右=紫，第三屏=荧光色） */
+  --ring-left: #4285f4; /* Google Blue */
+  --ring-left-glow: rgba(66, 133, 244, 0.35);
+  --ring-right: #a855f7; /* Violet-500 */
+  --ring-right-glow: rgba(168, 85, 247, 0.35);
+  --ring-third: #00ff88; /* 荧光绿色 */
+  --ring-third-glow: rgba(0, 255, 136, 0.45);
+  
+  /* 通用尺寸 */
+  --border-radius: 12px;
+  --border-radius-small: 8px;
+  --border-radius-full: 9999px;
+  --transition: all 0.2s ease;
+
+  /* 分屏分割线可见区域与偏移 */
+  --divider-top: 56px; /* 默认避开工具栏；JS 会动态更新 */
+  --divider-color: rgba(0, 0, 0, 0.35);
+  --divider-color-hover: rgba(0, 0, 0, 0.55);
+}
+
+/* 深色模式下使用浅色分隔线以保持对比度 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --divider-color: rgba(255, 255, 255, 0.35);
+    --divider-color-hover: rgba(255, 255, 255, 0.55);
+  }
+}
+
+body,
+html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #ffffff; /* 白色背景 */
+  color: #333;
+  display: flex; /* Flexbox 布局 */
+  flex-direction: row; /* 水平排列 */
+  height: 100vh;
+  width: 100vw; /* 让侧边栏页面占满可用宽度 */
+  -webkit-app-region: no-drag; /* 默认不可拖动 */
+}
+
+/* 右侧主内容区 */
+#main-content {
+  flex: 1; /* 占据剩余空间 */
+  position: relative;
+  height: 100%;
+  min-width: 0;  /* 修复 flex 子项在某些环境下不能缩放到满宽的问题 */
+  min-height: 0; /* 允许内部 iframe 按父容器高度伸展 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* 拖动区域 - 覆盖整个顶部，让所有空白处都能拖动 */
+.drag-zone {
+  position: absolute;
+  top: 0;
+  left: 52px; /* 为左侧侧边栏留出空间，与工具栏对齐 */
+  right: 0;
+  height: 80px; /* 更大的拖动区域 */
+  -webkit-app-region: drag; /* 允许拖动 */
+  z-index: 1; /* 最底层 */
+  cursor: move;
+}
+
+.hover-zone {
+  position: absolute;
+  top: 0;
+  left: 52px; /* 为左侧侧边栏留出空间，与工具栏对齐 */
+  right: 0;
+  height: 80px; /* 和拖动区域一样高 */
+  z-index: 10; /* 在拖动区域之上，但在工具栏之下 */
+  pointer-events: none; /* 不拦截事件，让拖动生效 */
+}
+
+.toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;  /* 向左扩展：仅调整左侧外边距，不改变按钮间距 */
+  right: 8px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: nowrap;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
+  z-index: 100; /* 在拖动区域之上 */
+  -webkit-app-region: no-drag; /* 背景不拖动，留给中间空白 */
+  /* 固定显示在顶部 */
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition: none;
+}
+
+/* 地址栏 - 在工具栏下方，仅显示在右侧内容区域 */
+.address-bar {
+  position: absolute;
+  top: 56px; /* 工具栏下方，8px + 40px + 8px */
+  /* left 和 right 通过 JavaScript 动态设置，以适配分屏位置 */
+  height: 36px;
+  z-index: 1000; /* 提高层级，确保在网页内容之上 */
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+  /* 初始位置，会在显示时通过 JavaScript 更新 */
+  left: 50%;
+  right: 8px;
+}
+
+.address-bar-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+.address-bar-wrapper #addressInput {
+  flex: 1;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.address-bar-wrapper #addressInput:focus {
+  border-color: #5a84ff;
+  box-shadow: 0 0 0 3px rgba(90, 132, 255, 0.1);
+}
+
+/* 中间和第三屏的“前往”按钮统一样式 */
+.address-bar-wrapper #addressGo,
+.address-bar-wrapper #addressGoThird {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  -webkit-app-region: no-drag;
+}
+
+/* Tab 锁定按钮（右侧 / 第三屏）样式与 addressGo 类似 */
+.address-bar-wrapper #tabLockRight,
+.address-bar-wrapper #tabLockThird {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  -webkit-app-region: no-drag;
+}
+.address-bar-wrapper #tabLockRight:hover,
+.address-bar-wrapper #tabLockThird:hover { background: #f8fafc; border-color: #dbe1e8; }
+.address-bar-wrapper #tabLockRight:active,
+.address-bar-wrapper #tabLockThird:active { background: #f1f5f9; box-shadow: 0 1px 4px rgba(15,23,42,.05); }
+.address-bar-wrapper #tabLockRight.active,
+.address-bar-wrapper #tabLockThird.active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+/* Align 按钮激活状态：与 Lock 风格保持一致 */
+#alignBtn.align-active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.address-bar-wrapper #addressGo:hover,
+.address-bar-wrapper #addressGoThird:hover {
+  background: #f8fafc;
+  border-color: #dbe1e8;
+}
+
+.address-bar-wrapper #addressGo:active,
+.address-bar-wrapper #addressGoThird:active {
+  background: #f1f5f9;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.05);
+}
+
+.toolbar label {
+  font-size: 12px;
+  opacity: 0.95;
+}
+
+/* Custom dropdown (provider) */
+.dropdown { position: relative; }
+.dd-toggle {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, var(--btn-blue-start) 0%, var(--btn-blue-end) 100%);
+  color: var(--btn-text);
+  border: 1px solid var(--btn-blue-border);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.15), 0 6px 16px var(--btn-blue-shadow);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dd-toggle #providerLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.dd-toggle .chev { font-size: 12px; opacity: .95; }
+.dd-toggle:hover { filter: brightness(1.05); }
+.dd-toggle:active { filter: brightness(0.97); }
+
+.dd-menu {
+  position: absolute;
+  top: 36px;
+  left: 0;
+  min-width: 240px;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.18);
+  padding: 6px 0;
+  z-index: 100001;
+  user-select: none;
+}
+
+/* 图标网格布局 */
+.dd-menu .icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 12px;
+  max-width: 200px;
+}
+.dd-add {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  color: #2563eb;
+  font-weight: 600;
+}
+.dd-add:hover { background: #f3f7ff; }
+.dd-item {
+  padding: 12px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  min-height: 40px; /* larger hit area */
+}
+.dd-item:last-child { border-bottom: none; }
+.dd-item:hover { background: #f3f7ff; }
+.dd-item.active { background: #e8f0fe; }
+.dd-item.active::after {
+  content: '✓';
+  float: right;
+  color: #4285f4;
+  font-weight: 700;
+}
+/* delete control removed */
+
+/* move-to-top arrow on the left */
+.dd-item .pin {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8ab4ff;
+  margin-right: 8px;
+  visibility: hidden;
+}
+.dd-item:hover .pin { visibility: visible; }
+.dd-item .pin:hover { color: #4285f4; }
+.dd-item .label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* Provider icons in dropdown menu */
+.provider-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* 网格中的图标样式 */
+.icon-grid-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.icon-grid-item:hover {
+  background: #f3f7ff;
+  transform: scale(1.05);
+}
+
+.icon-grid-item.active {
+  background: #e8f0fe;
+  box-shadow: 0 0 0 2px #4285f4;
+}
+
+.icon-grid-item .provider-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.icon-grid-item .provider-icon-fallback {
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+}
+
+/* Provider icon in button */
+.provider-icon-btn {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+
+/* Fallback icon (when image fails to load) */
+.provider-icon-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* delete button for custom items */
+.dd-item .del {
+  margin-left: 8px;
+  color: #64748b;
+  visibility: hidden;
+  cursor: pointer;
+}
+.dd-item:hover .del { visibility: visible; }
+.dd-item .del:hover { color: #ef4444; }
+
+/* Unified button style for all toolbar buttons */
+.toolbar button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 3px 14px rgba(15,23,42,0.06);
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.2s ease;
+  -webkit-app-region: no-drag; /* 按钮本身不可拖动，但可点击 */
+  pointer-events: auto; /* 确保按钮可以接收点击事件 */
+}
+.toolbar button:hover {
+  background: #f8fafc;
+  border-color: #dbe1e8;
+}
+.toolbar button:active {
+  background: #f1f5f9;
+  box-shadow: 0 2px 8px rgba(15,23,42,0.05);
+}
+
+/* Star button - icon only, fixed width */
+.toolbar button#starBtn {
+  flex: 0 0 auto;
+  width: 40px;
+  padding: 0;
+  font-size: 18px;
+  margin-right: 16px; /* 增加星号和右边元素的间距 */
+}
+.toolbar button#starBtn:hover {
+  transform: scale(1.05);
+}
+.toolbar button#starBtn:active {
+  transform: scale(0.98);
+}
+.toolbar button#starBtn.starred {
+  color: #000000;
+}
+
+/* Back button - 返回按钮 */
+.toolbar button#backBtn {
+  /* 与其他功能按钮保持一致的占位与间隔 */
+  flex: 1;
+  min-width: 0; /* 允许等分时内容溢出省略 */
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 700; /* 更粗的字重，便于强调“Return” */
+  /* 使用统一的按钮样式 */
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  color: #111827;
+  box-shadow: 0 3px 14px rgba(15,23,42,0.06);
+}
+.toolbar button#backBtn:hover {
+  background: #f8fafc;
+  border-color: #dbe1e8;
+}
+.toolbar button#backBtn:active {
+  background: #f1f5f9;
+  box-shadow: 0 2px 8px rgba(15,23,42,0.05);
+}
+
+/* Search button - active state */
+.toolbar button#searchBtn.active {
+  background: linear-gradient(135deg, var(--btn-blue-start), var(--btn-blue-end));
+  border-color: var(--btn-blue-border);
+  color: #ffffff;
+  box-shadow: 0 4px 14px var(--btn-blue-shadow);
+}
+
+/* Align button - active state */
+.toolbar button#alignBtn.active {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border-color: #047857;
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+/* History dropdown panel */
+.history-panel {
+  position: absolute;
+  top: 52px;
+  right: 16px;
+  /* Responsive width: shrink/grow with page, bounded by min/max */
+  width: min(960px, calc(100% - 32px));
+  min-width: 320px;
+  max-width: calc(100% - 32px);
+  max-height: 60vh;
+  /* Prevent width jumping when vertical scrollbar toggles */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable both-edges;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.18);
+  z-index: 2147483646; /* ensure above any iframe/backdrop */
+  /* Keep typography stable regardless of focus/zoom quirks */
+  font-size: 13px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* 减少因合成层切换导致的闪烁 */
+  will-change: opacity, transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout paint;
+}
+/* Backdrop to catch outside clicks, placed under history panel */
+.history-backdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent; /* invisible click-catcher */
+  z-index: 2147483645;
+  /* 稳定合成层 */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/* Favorites dropdown panel (shares style with history) */
+.favorites-panel {
+  position: absolute;
+  top: 88px; /* slightly below toolbar to sit under buttons */
+  right: 16px;
+  min-width: 360px;
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable both-edges;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.18);
+  z-index: 2147483646;
+  font-size: 13px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  will-change: opacity, transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: layout paint;
+}
+.favorites-backdrop { position: fixed; inset: 0; background: transparent; z-index: 2147483645; transform: translateZ(0); backface-visibility: hidden; }
+
+.favorites-panel .fp-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #eef2f7; font-weight: 600; }
+.favorites-panel .fp-actions button { margin-left: 8px; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid #e5e7eb; background: #fff; cursor: pointer; }
+.favorites-panel .fp-list { padding: 6px 0; }
+.favorites-panel .fp-item { display: flex; align-items: center; padding: 8px 12px; gap: 8px; }
+.favorites-panel .fp-item:hover { background: #f8fafc; }
+.favorites-panel .fp-provider { font-size: 11px; color: #64748b; min-width: 72px; }
+.favorites-panel .fp-title { flex: 1; font-size: 12px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+.favorites-panel .fp-title:hover { background: #eef2ff; }
+.favorites-panel .fp-title-input { flex: 1; font-size: 12px; color: #0f172a; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px 6px; }
+.favorites-panel .fp-time { font-size: 11px; color: #94a3b8; margin-left: 6px; }
+.favorites-panel .fp-actions-row { display: inline-flex; gap: 6px; }
+.favorites-panel .fp-actions-row a, .favorites-panel .fp-actions-row button { font-size: 11px; color: #2563eb; background: transparent; border: none; cursor: pointer; }
+.favorites-panel .fp-search-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px 4px 12px; }
+.favorites-panel .fp-search-icon { color: #94a3b8; font-size: 14px; }
+.favorites-panel .fp-search-input { flex: 1; height: 32px; padding: 0 12px; border: 1px solid #e8eefc; background: #fff; border-radius: 16px; font-size: 13px; line-height: 32px; box-sizing: border-box; box-shadow: inset 0 0 0 1px rgba(37,99,235,0.05); }
+.history-panel .hp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef2f7;
+  font-weight: 600;
+  -webkit-app-region: no-drag; /* 确保按钮可点击，不被拖动区域拦截 */
+}
+.history-panel .hp-header-actions button {
+  margin-left: 8px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  cursor: pointer;
+}
+.history-panel .hp-list { padding: 6px 0; }
+.history-panel .hp-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  gap: 8px;
+}
+.history-panel .hp-item:hover { background: #f8fafc; }
+.history-panel .hp-item .hp-provider {
+  font-size: 11px;
+  color: #64748b;
+  min-width: 72px;
+  flex: 0 0 72px; /* keep stable column but allow media overrides */
+}
+.history-panel .hp-item .hp-title {
+  flex: 1;
+  font-size: 12px;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+.history-panel .hp-item .hp-title:hover { background: #eef2ff; }
+.history-panel .hp-title-input {
+  flex: 1;
+  font-size: 12px;
+  color: #0f172a;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.history-panel .hp-item .hp-time { font-size: 11px; color: #94a3b8; margin-left: 6px; }
+.history-panel .hp-item .hp-actions { display: inline-flex; gap: 6px; }
+.history-panel .hp-item .hp-actions a,
+.history-panel .hp-item .hp-actions button {
+  font-size: 11px;
+  color: #2563eb;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.history-panel .hp-item .hp-actions .hp-star { color: #cbd5e1; }
+.history-panel .hp-item .hp-actions .hp-star.active { color: #f59e0b; }
+
+/* History search input */
+.history-panel .hp-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 4px 12px;
+}
+.history-panel .hp-search-icon {
+  color: #94a3b8;
+  font-size: 14px;
+}
+.history-panel .hp-search-input {
+  flex: 1;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e8eefc;
+  background: #fff;
+  border-radius: 16px;
+  font-size: 13px;
+  line-height: 32px; /* keep text and input height stable */
+  box-sizing: border-box; /* avoid width changes due to borders/padding */
+  box-shadow: inset 0 0 0 1px rgba(37,99,235,0.05);
+}
+
+/* spacing rules kept minimal */
+
+/* Responsive adjustments for narrow widths */
+@media (max-width: 900px) {
+  .history-panel { width: calc(100% - 24px); right: 12px; }
+  .toolbar { right: 6px; left: 6px; gap: 6px; }
+  .toolbar a,
+  .toolbar button { font-size: 11px; }
+  .toolbar a,
+  .toolbar button { max-width: 140px; }
+}
+@media (max-width: 720px) {
+  .history-panel .hp-item .hp-provider { min-width: 56px; flex: 0 0 56px; }
+  .history-panel .hp-item .hp-time { display: none; }
+  .history-panel .hp-item { gap: 6px; }
+  .history-panel .hp-item .hp-actions { gap: 4px; }
+  .toolbar { gap: 6px; }
+  .toolbar a,
+  .toolbar button { max-width: 120px; font-size: 10.5px; padding: 0 10px; }
+}
+
+/* Reveal toolbar when hovering top edge or toolbar itself */
+/* 保持固定显示，不再依赖 hover */
+
+/* 中间用于拖动的空白区域 */
+.toolbar-spacer {
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 120px; /* 留出可见空白 */
+  -webkit-app-region: drag;
+  cursor: move;
+}
+
+/* 分屏分割线指示器 - 可拖动 */
+.split-divider {
+  position: fixed; /* 固定在视口，覆盖全高 */
+  top: var(--divider-top, 56px);
+  bottom: 0;
+  /* 加大实际可点击区域，但不改变可见线条 */
+  width: 24px; /* 可点击区域（左右各 12px） */
+  z-index: 2147483647; /* 最高层级，确保在所有内容之上 */
+  pointer-events: auto;
+  cursor: col-resize;
+  /* 由 JS 设置位置：含义为“分割线中心所在的 x”左边缘。为保证视觉居中，使用伪元素绘制细线 */
+  left: 0;
+  transform: translateX(-50%); /* 让元素中心与 left 对齐（left=分割线中心） */
+  transition: left 0.1s ease; /* 仅位置需要过渡 */
+  background: transparent; /* 本体透明，仅作为命中区域 */
+  padding: 0;
+  margin: 0;
+}
+
+/* 用伪元素在命中区域的“中心”绘制一条细的蓝色线 */
+.split-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;               /* 居中绘制可见线 */
+  width: 4px;              /* 可见线宽 */
+  transform: translateX(-50%);
+  background: var(--divider-color);
+  box-shadow: 0 0 0 1px var(--divider-color);
+  pointer-events: none;    /* 事件落到父元素，扩大命中 */
+}
+
+.split-divider:hover::before {
+  background: var(--divider-color-hover);
+  width: 6px; /* 悬停时仅加粗可见线，不改变命中区域 */
+  box-shadow: 0 0 0 1px var(--divider-color-hover);
+}
+
+.split-divider.dragging::before {
+  background: var(--divider-color-hover);
+  width: 6px;
+  box-shadow: 0 0 0 2px var(--divider-color-hover);
+}
+
+/* toolbar buttons removed */
+
+#iframe {
+  position: absolute; /* 覆盖整个主内容区域，实现真正全屏 */
+  inset: 0;          /* top/right/bottom/left 全为 0 */
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background-color: #ffffff; /* 白色背景 */
+  overflow: hidden; /* 防止内部内容外溢 */
+  transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+  opacity: 0;
+  transform: translateY(30px);
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+/* 第三屏容器样式 */
+#thirdScreen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 33.33%; /* 三分屏时占1/3宽度 */
+  border: none;
+  border-radius: 0;
+  background-color: #ffffff;
+  overflow: hidden;
+  transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+  opacity: 0;
+  transform: translateY(30px);
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+/* 三分屏模式下的布局调整 */
+body.three-screen-mode #iframe {
+  width: 33.33%; /* 主屏占1/3 */
+  left: 0;
+}
+
+body.three-screen-mode #splitDivider {
+  left: 33.33%; /* 第一条分割线在1/3处 */
+}
+
+body.three-screen-mode #thirdDivider {
+  left: 66.66%; /* 第二条分割线在2/3处 */
+}
+
+/* 确保第三屏分割线样式与主分割线一致 */
+#thirdDivider {
+  position: fixed;
+  top: var(--divider-top, 56px);
+  bottom: 0;
+  width: 24px;
+  z-index: 2147483647;
+  pointer-events: auto;
+  cursor: col-resize;
+  left: 0;
+  transform: translateX(-50%);
+  transition: left 0.1s ease;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
+#thirdDivider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 4px;
+  transform: translateX(-50%);
+  background: var(--divider-color);
+  box-shadow: 0 0 0 1px var(--divider-color);
+  pointer-events: none;
+}
+
+#thirdDivider:hover::before {
+  background: var(--divider-color-hover);
+  width: 6px;
+  box-shadow: 0 0 0 1px var(--divider-color-hover);
+}
+
+#thirdDivider.dragging::before {
+  background: var(--divider-color-hover);
+  width: 6px;
+  box-shadow: 0 0 0 2px var(--divider-color-hover);
+}
+
+/* 在 Electron BrowserView 模式下，#iframe 只是一个占位容器，实际内容在 BrowserView 中 */
+/* 确保实际嵌入的 iframe/webview 也完全铺满（兼容非 Electron 环境） */
+#iframe iframe,
+#iframe webview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.extension-body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background: linear-gradient(135deg, #d4d9e3, #eef1f5);
+}
+
+/* prompt overlay removed */
+
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Removed per-provider scaling to keep natural size */
+
+/* 左侧垂直导航栏样式 */
+#provider-tabs {
+  width: 60px; /* 侧边栏宽度 */
+  box-sizing: border-box; /* 宽度稳定，包含内边距与边框 */
+  height: 100vh;
+  display: flex;
+  flex-direction: column; /* 垂直排列 */
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 8px;
+  background: #f5f5f5;
+  border-right: 1px solid #e0e0e0; /* 右边框 */
+  overflow-y: auto; /* 垂直滚动 */
+  overflow-x: visible; /* 允许折叠/展开按钮放在最左侧 */
+  z-index: 100004; /* 提高层级，确保在拖动区域之上 */
+  flex-shrink: 0;
+  transition: width 0.18s ease, padding 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  -webkit-app-region: no-drag; /* 确保侧边栏可点击 */
+}
+
+/* 顶部折叠头部（展开时置顶不遮挡图标） */
+#provider-tabs .tabs-header {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  margin-bottom: 6px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.3));
+  backdrop-filter: blur(6px);
+  z-index: 1;
+  width: 100%;
+  -webkit-app-region: drag; /* 允许拖动窗口 */
+  cursor: move;
+}
+
+#provider-tabs .tabs-toggle {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  border: 1px solid #e0e0e0;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  position: relative;
+  z-index: 2; /* 确保折叠按钮始终可点击 */
+  -webkit-app-region: no-drag; /* 确保可点击 */
+}
+#provider-tabs .tabs-toggle:hover { color: #111827; border-color: #cbd5e1; }
+
+/* 隐藏滚动条但保持可滚动 */
+#provider-tabs::-webkit-scrollbar {
+  width: 0;
+  display: none;
+}
+
+/* 左侧导航栏关闭按钮 - 固定在顶部 */
+#provider-tabs .sidebar-close-btn {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 18px;
+  position: relative;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+  margin-bottom: 0;
+  opacity: 0.7;
+}
+#provider-tabs .sidebar-close-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  opacity: 1;
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.15);
+}
+#provider-tabs .sidebar-close-btn:active {
+  background: #fecaca;
+  color: #b91c1c;
+  transform: scale(1.0);
+  box-shadow: 0 1px 4px rgba(185, 28, 28, 0.2);
+}
+
+#provider-tabs button {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  position: relative;
+  z-index: 1; /* 确保按钮在容器内可见 */
+  -webkit-app-region: no-drag; /* 确保按钮可点击 */
+}
+
+#provider-tabs button:hover {
+  background: #e8e8e8;
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+#provider-tabs button.active {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px var(--ring-left), 0 0 10px var(--ring-left-glow);
+  opacity: 1;
+}
+
+/* 单独为右侧 Provider 添加紫色光圈（不影响左侧当前 active） */
+#provider-tabs button.right-active { 
+  box-shadow: 0 0 0 2px var(--ring-right), 0 0 10px var(--ring-right-glow);
+}
+
+/* 单独为第三屏 Provider 添加荧光色光圈 */
+#provider-tabs button.third-active { 
+  box-shadow: 0 0 0 2px var(--ring-third), 0 0 10px var(--ring-third-glow);
+}
+
+/* 优先级：第三屏 > 右屏 > 左屏 */
+#provider-tabs button.active.right-active {
+  box-shadow: 0 0 0 2px var(--ring-right), 0 0 10px var(--ring-right-glow);
+}
+
+#provider-tabs button.active.third-active,
+#provider-tabs button.right-active.third-active,
+#provider-tabs button.active.right-active.third-active {
+  box-shadow: 0 0 0 2px var(--ring-third), 0 0 10px var(--ring-third-glow);
+}
+
+/* 保留容器类但不改变 active 样式，避免误导 */
+#provider-tabs.side-right button.active { box-shadow: 0 0 0 2px var(--ring-left), 0 0 10px var(--ring-left-glow); }
+#provider-tabs.side-left  button.active { box-shadow: 0 0 0 2px var(--ring-left), 0 0 10px var(--ring-left-glow); }
+
+
+#provider-tabs button .provider-icon,
+#provider-tabs button img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+#provider-tabs button .provider-icon-fallback {
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+}
+
+/* 拖拽中与插入位置指示 */
+#provider-tabs button.dragging {
+  opacity: 0.75;
+  transform: scale(1.05);
+}
+#provider-tabs button.insert-before {
+  box-shadow: inset 0 2px 0 #4285f4, 0 0 0 2px rgba(66,133,244,0.0);
+}
+#provider-tabs button.insert-after {
+  box-shadow: inset 0 -2px 0 #4285f4, 0 0 0 2px rgba(66,133,244,0.0);
+}
+
+/* 折叠状态：隐藏灰色栏，仅保留浮在左边缘的开关按钮 */
+#provider-tabs.collapsed {
+  width: 0;
+  padding: 0;
+  background: transparent;
+  border-right: 0;
+  overflow: visible; /* 允许开关浮出 */
+  pointer-events: none; /* 只有开关可点 */
+}
+#provider-tabs.collapsed button[data-provider-id] { display: none; }
+#provider-tabs.collapsed .tabs-header {
+  position: absolute;
+  top: 10px;
+  left: 0px; /* 贴紧最左侧边缘 */
+  right: auto;
+  width: auto;
+  height: auto;
+  margin: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+#provider-tabs.collapsed .tabs-toggle {
+  pointer-events: auto;
+  width: 18px;
+  height: 28px;
+  border-radius: 14px;
+  font-size: 12px;
+}
+
+/* When the left nav is collapsed, adjust drag zone and toolbar */
+#provider-tabs.collapsed + #main-content .drag-zone {
+  left: 30px; /* 留出空间给折叠按钮 */
+}
+
+#provider-tabs.collapsed + #main-content .hover-zone {
+  left: 30px; /* 留出空间给折叠按钮 */
+}
+
+#provider-tabs.collapsed + #main-content .toolbar {
+  left: 8px; /* 与非折叠一致，工具栏覆盖一整行 */
+}
+
+#provider-tabs.collapsed + #main-content .address-bar {
+  left: 38px; /* 调整地址栏位置 */
+}
+
+/* Ensure the toggle remains clickable above everything */
+#provider-tabs.collapsed .tabs-header {
+  z-index: 1000000; /* 确保在所有元素之上 */
+}
+
+#provider-tabs.collapsed .tabs-toggle {
+  z-index: 1000001; /* 确保按钮本身在最上面 */
+}
+
+/* Keyboard Shortcuts Settings Modal */
+.settings-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100010;
+}
+
+/* Align Modal */
+.align-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100010;
+}
+
+.align-message-input {
+  margin-bottom: 20px;
+}
+
+.align-message-input label {
+  display: block;
+  font-weight: 500;
+  color: #334155;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.align-message-input textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.align-message-input textarea:focus {
+  outline: none;
+  border-color: var(--btn-blue-start);
+  box-shadow: 0 0 0 3px rgba(90, 132, 255, 0.1);
+}
+
+.align-providers {
+  margin-bottom: 20px;
+}
+
+.align-providers > label {
+  display: block;
+  font-weight: 500;
+  color: #334155;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.providers-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.provider-checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.provider-checkbox label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+  width: 100%;
+}
+
+.provider-checkbox label:hover {
+  background: #e2e8f0;
+}
+
+.provider-checkbox input[type="checkbox"] {
+  margin-right: 8px;
+  width: 16px;
+  height: 16px;
+}
+
+.provider-name {
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.align-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.align-send-btn {
+  background: linear-gradient(135deg, #10b981, #059669);
+  border: 1px solid #047857;
+  color: #ffffff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.align-send-btn:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+}
+
+.align-send-btn:active {
+  transform: translateY(1px);
+}
+
+.settings-modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.settings-modal-content {
+  position: relative;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  width: 90%;
+  max-width: 400px;
+  max-height: 80vh;
+  overflow-y: auto;
+  z-index: 100011;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.settings-close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.settings-close-btn:hover {
+  background: #f1f5f9;
+}
+
+.settings-body {
+  padding: 20px;
+}
+
+.shortcut-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.shortcut-row label {
+  font-weight: 500;
+  color: #334155;
+  font-size: 14px;
+}
+
+.shortcut-input-group {
+  display: flex;
+  gap: 8px;
+}
+
+.shortcut-display {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #f8fafc;
+  font-family: monospace;
+}
+
+.record-btn {
+  padding: 8px 16px;
+  background: linear-gradient(180deg, #5a84ff 0%, #436af7 100%);
+  color: white;
+  border: 1px solid #395fe0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  transition: filter 0.2s;
+}
+
+.record-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.record-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.shortcut-info {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+  color: #0369a1;
+  margin-top: 12px;
+}
+
+/* 搜索栏样式 */
+.search-bar {
+  position: absolute;
+  top: 56px; /* 在工具栏下方 */
+  left: 8px;
+  right: 8px;
+  z-index: 99999;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.12);
+  padding: 12px;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.search-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#searchInput {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #dbe1e8;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+#searchInput:focus {
+  border-color: var(--btn-blue-start);
+  box-shadow: 0 0 0 3px rgba(90, 132, 255, 0.1);
+}
+
+.search-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-controls button {
+  padding: 6px 10px;
+  border: 1px solid #dbe1e8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-controls button:hover {
+  background: var(--bg-hover);
+  border-color: var(--btn-blue-start);
+}
+
+.search-controls button:active {
+  background: var(--bg-active);
+}
+
+#searchClose {
+  color: #64748b;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+#searchClose:hover {
+  color: #ef4444;
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.search-count {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+  min-width: 60px;
+  text-align: center;
+}
+
+/* ========== 移动端适配 (iOS/Android) ========== */
+@media (max-width: 500px) {
+  /* 工具栏在小屏幕上使用更紧凑的布局 */
+  .toolbar {
+    left: 4px;
+    right: 4px;
+    gap: 4px;
+    padding: 4px;
+    flex-wrap: wrap;
+  }
+  
+  .toolbar button {
+    font-size: 10px;
+    padding: 6px 8px;
+    min-width: auto;
+    flex: 1 1 auto;
+  }
+  
+  /* 隐藏工具栏中间的拖动区域 */
+  .toolbar-spacer {
+    display: none;
+  }
+  
+  /* 星号按钮保持固定大小 */
+  .toolbar button#starBtn {
+    width: 32px;
+    margin-right: 4px;
+    flex: 0 0 auto;
+  }
+  
+  /* 左侧导航栏在移动端使用更小的图标 */
+  #provider-tabs {
+    width: 48px;
+    min-width: 48px;
+    padding: 8px 4px;
+  }
+  
+  #provider-tabs button {
+    width: 36px;
+    height: 36px;
+    margin-bottom: 6px;
+  }
+  
+  #provider-tabs button img {
+    width: 20px;
+    height: 20px;
+  }
+  
+  /* 关闭按钮调整 */
+  #provider-tabs .sidebar-close-btn {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+  }
+  
+  /* 拖动区域适配 */
+  .drag-zone,
+  .hover-zone {
+    left: 48px;
+    height: 60px;
+  }
+  
+  /* 历史面板全宽 */
+  .history-panel,
+  .favorites-panel {
+    width: calc(100% - 16px);
+    right: 8px;
+    left: 56px;
+    max-height: 50vh;
+  }
+}
+
+/* iPhone 安全区域适配 */
+@supports (padding-top: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  
+  #provider-tabs {
+    padding-top: calc(8px + env(safe-area-inset-top));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  
+  .toolbar {
+    top: calc(8px + env(safe-area-inset-top));
+  }
+}

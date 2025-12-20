@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: transparent;
+      -webkit-app-region: no-drag;
+      user-select: none;
+    }
+    .search-container {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 8px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15), 0 0 1px rgba(0,0,0,0.1);
+      border: 1px solid #ddd;
+    }
+    .search-input {
+      width: 180px;
+      height: 28px;
+      padding: 0 8px;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      font-size: 13px;
+      outline: none;
+      background: #f8f9fa;
+    }
+    .search-input:focus {
+      border-color: #4285f4;
+      background: #fff;
+    }
+    .search-input.not-found {
+      background: #fff3cd;
+      border-color: #ffc107;
+    }
+    .search-count {
+      font-size: 12px;
+      color: #666;
+      min-width: 50px;
+      text-align: center;
+    }
+    .search-btn {
+      width: 26px;
+      height: 26px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+    }
+    .search-btn:hover {
+      background: #f0f0f0;
+    }
+    .search-btn:active {
+      background: #e0e0e0;
+    }
+    .search-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    .close-btn:hover {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+  </style>
+</head>
+<body>
+  <div class="search-container">
+    <input type="text" class="search-input" id="searchInput" placeholder="搜索..." autofocus>
+    <span class="search-count" id="searchCount"></span>
+    <button class="search-btn" id="prevBtn" title="上一个 (Shift+Enter)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="18 15 12 9 6 15"></polyline>
+      </svg>
+    </button>
+    <button class="search-btn" id="nextBtn" title="下一个 (Enter)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    </button>
+    <button class="search-btn close-btn" id="closeBtn" title="关闭 (Esc)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    const searchInput = document.getElementById('searchInput');
+    const searchCount = document.getElementById('searchCount');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const closeBtn = document.getElementById('closeBtn');
+
+    // 搜索
+    function performSearch(direction = '') {
+      const term = searchInput.value;
+      if (!term) {
+        ipcRenderer.send('search-bar-stop');
+        searchCount.textContent = '';
+        searchInput.classList.remove('not-found');
+        return;
+      }
+      ipcRenderer.send('search-bar-find', { text: term, direction });
+    }
+
+    // 输入事件
+    searchInput.addEventListener('input', () => performSearch());
+
+    // 键盘事件
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        performSearch(e.shiftKey ? 'prev' : 'next');
+      } else if (e.key === 'Escape') {
+        ipcRenderer.send('search-bar-close');
+      }
+    });
+
+    // 按钮事件
+    prevBtn.addEventListener('click', () => performSearch('prev'));
+    nextBtn.addEventListener('click', () => performSearch('next'));
+    closeBtn.addEventListener('click', () => ipcRenderer.send('search-bar-close'));
+
+    // 接收搜索结果
+    ipcRenderer.on('search-bar-result', (event, result) => {
+      if (result.matches > 0) {
+        searchCount.textContent = `${result.activeMatchOrdinal}/${result.matches}`;
+        searchInput.classList.remove('not-found');
+      } else if (result.finalUpdate) {
+        searchCount.textContent = '未找到';
+        searchInput.classList.add('not-found');
+      }
+    });
+
+    // 窗口显示时聚焦输入框
+    ipcRenderer.on('search-bar-focus', () => {
+      searchInput.focus();
+      searchInput.select();
+    });
+
+    // 全局 ESC 监听
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ipcRenderer.send('search-bar-close');
+      }
+    });
+
+    // 初始聚焦
+    setTimeout(() => searchInput.focus(), 50);
+  </script>
+</body>
+</html>

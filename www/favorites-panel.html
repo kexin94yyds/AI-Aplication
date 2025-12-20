@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: transparent;
+      -webkit-app-region: no-drag;
+      user-select: none;
+    }
+    .panel-container {
+      width: 500px;
+      max-height: 500px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2), 0 0 1px rgba(0,0,0,0.1);
+      border: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #eee;
+      background: #fafafa;
+    }
+    .panel-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #333;
+    }
+    .header-buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .header-btn {
+      padding: 6px 12px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #555;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .header-btn:hover {
+      background: #f0f0f0;
+    }
+    .header-btn.close-btn:hover {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+    .search-box {
+      padding: 10px 16px;
+      border-bottom: 1px solid #eee;
+    }
+    .search-input {
+      width: 100%;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      background: #f8f9fa;
+    }
+    .search-input:focus {
+      border-color: #4285f4;
+      background: #fff;
+    }
+    .list-container {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 400px;
+    }
+    .list-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .list-item:hover {
+      background: #f5f5f5;
+    }
+    .list-item:last-child {
+      border-bottom: none;
+    }
+    .provider-tag {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-right: 10px;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+    .provider-chatgpt { background: #10a37f20; color: #10a37f; }
+    .provider-claude { background: #8b5cf620; color: #8b5cf6; }
+    .provider-gemini { background: #4285f420; color: #4285f4; }
+    .provider-grok { background: #1da1f220; color: #1da1f2; }
+    .provider-deepseek { background: #ff6b3520; color: #ff6b35; }
+    .provider-poe { background: #6366f120; color: #6366f1; }
+    .provider-perplexity { background: #22c55e20; color: #22c55e; }
+    .provider-default { background: #9ca3af20; color: #9ca3af; }
+    .item-title {
+      flex: 1;
+      font-size: 13px;
+      color: #333;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-right: 10px;
+    }
+    .item-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .list-item:hover .item-actions {
+      opacity: 1;
+    }
+    .action-btn {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+    }
+    .action-btn:hover {
+      background: #e0e0e0;
+    }
+    .action-btn.delete-btn:hover {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+    .action-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    .empty-state {
+      padding: 40px 20px;
+      text-align: center;
+      color: #999;
+      font-size: 13px;
+    }
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 12px;
+      color: #ddd;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel-container">
+    <div class="panel-header">
+      <span class="panel-title">⭐ 收藏夹</span>
+      <div class="header-buttons">
+        <button class="header-btn" id="exportBtn" title="导出收藏">导出</button>
+        <button class="header-btn" id="importBtn" title="导入收藏">导入</button>
+        <button class="header-btn" id="clearAllBtn" title="清空所有" style="color:#d32f2f;">Clear All</button>
+        <button class="header-btn close-btn" id="closeBtn" title="关闭 (Esc)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+          关闭
+        </button>
+      </div>
+    </div>
+    <div class="search-box">
+      <input type="text" class="search-input" id="searchInput" placeholder="搜索收藏..." autofocus>
+    </div>
+    <div class="list-container" id="listContainer">
+      <div class="empty-state" id="emptyState">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+        <div>暂无收藏</div>
+        <div style="font-size: 12px; margin-top: 4px;">点击历史记录中的 ⭐ 添加收藏</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    const searchInput = document.getElementById('searchInput');
+    const listContainer = document.getElementById('listContainer');
+    const emptyState = document.getElementById('emptyState');
+    const closeBtn = document.getElementById('closeBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+
+    let favoritesData = [];
+
+    // 获取 provider 样式类
+    function getProviderClass(provider) {
+      const p = (provider || '').toLowerCase();
+      if (p.includes('chatgpt') || p.includes('openai')) return 'provider-chatgpt';
+      if (p.includes('claude')) return 'provider-claude';
+      if (p.includes('gemini')) return 'provider-gemini';
+      if (p.includes('grok')) return 'provider-grok';
+      if (p.includes('deepseek')) return 'provider-deepseek';
+      if (p.includes('poe')) return 'provider-poe';
+      if (p.includes('perplexity')) return 'provider-perplexity';
+      return 'provider-default';
+    }
+
+    // 获取 provider 显示名
+    function getProviderName(provider) {
+      const p = (provider || '').toLowerCase();
+      if (p.includes('chatgpt')) return 'ChatGPT';
+      if (p.includes('claude')) return 'Claude';
+      if (p.includes('gemini')) return 'Gemini';
+      if (p.includes('grok')) return 'Grok';
+      if (p.includes('deepseek')) return 'DeepSeek';
+      if (p.includes('poe')) return 'Poe';
+      if (p.includes('perplexity')) return 'Perplexity';
+      return provider || 'Other';
+    }
+
+    // 渲染列表
+    function renderList(items) {
+      // 移除旧列表项
+      const oldItems = listContainer.querySelectorAll('.list-item');
+      oldItems.forEach(item => item.remove());
+
+      if (!items || items.length === 0) {
+        emptyState.style.display = 'block';
+        return;
+      }
+      emptyState.style.display = 'none';
+
+      items.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = 'list-item';
+        div.innerHTML = `
+          <span class="provider-tag ${getProviderClass(item.provider)}">${getProviderName(item.provider)}</span>
+          <span class="item-title" title="${item.title || item.url}">${item.title || item.url}</span>
+          <div class="item-actions">
+            <button class="action-btn open-btn" title="打开">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+            <button class="action-btn copy-btn" title="复制链接">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+            <button class="action-btn rename-btn" title="重命名">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+            </button>
+            <button class="action-btn delete-btn" title="删除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        `;
+
+        // 双击打开
+        div.addEventListener('dblclick', () => {
+          ipcRenderer.send('favorites-panel-open', { url: item.url, provider: item.provider });
+        });
+
+        // 按钮事件
+        div.querySelector('.open-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          ipcRenderer.send('favorites-panel-open', { url: item.url, provider: item.provider });
+        });
+
+        div.querySelector('.copy-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          ipcRenderer.send('favorites-panel-copy', { url: item.url });
+        });
+
+        div.querySelector('.rename-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          const newTitle = prompt('输入新名称:', item.title || '');
+          if (newTitle !== null && newTitle !== item.title) {
+            ipcRenderer.send('favorites-panel-rename', { index, newTitle });
+          }
+        });
+
+        div.querySelector('.delete-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm('确定要删除这个收藏吗？')) {
+            ipcRenderer.send('favorites-panel-delete', { index });
+          }
+        });
+
+        listContainer.appendChild(div);
+      });
+    }
+
+    // 搜索过滤
+    function filterList() {
+      const term = searchInput.value.toLowerCase();
+      if (!term) {
+        renderList(favoritesData);
+        return;
+      }
+      const filtered = favoritesData.filter(item => 
+        (item.title || '').toLowerCase().includes(term) ||
+        (item.url || '').toLowerCase().includes(term) ||
+        (item.provider || '').toLowerCase().includes(term)
+      );
+      renderList(filtered);
+    }
+
+    // 搜索输入事件
+    searchInput.addEventListener('input', filterList);
+
+    // 关闭按钮
+    closeBtn.addEventListener('click', () => ipcRenderer.send('favorites-panel-close'));
+
+    // 导出按钮 - 直接在面板中导出
+    exportBtn.addEventListener('click', () => {
+      if (!favoritesData || favoritesData.length === 0) {
+        alert('没有可导出的收藏');
+        return;
+      }
+      const dataStr = JSON.stringify(favoritesData, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ai-sidebar-favorites-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // 导入按钮 - 直接在面板中处理文件选择
+    importBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = async (e) => {
+        try {
+          const file = e.target.files[0];
+          if (!file) return;
+          const text = await file.text();
+          const imported = JSON.parse(text);
+          if (!Array.isArray(imported)) {
+            alert('无效的导入文件格式');
+            return;
+          }
+          // 发送导入数据给主进程处理
+          ipcRenderer.send('favorites-panel-import-data', imported);
+        } catch (err) {
+          console.error('导入收藏失败:', err);
+          alert('导入失败：' + String(err));
+        }
+      };
+      input.click();
+    });
+
+    // 清空所有按钮
+    clearAllBtn.addEventListener('click', () => {
+      if (confirm('确定要清空所有收藏吗？此操作不可撤销。')) {
+        ipcRenderer.send('favorites-panel-clear-all');
+      }
+    });
+
+    // 全局 ESC 监听
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ipcRenderer.send('favorites-panel-close');
+      }
+    });
+
+    // 接收收藏数据
+    ipcRenderer.on('favorites-data', (event, data) => {
+      // 数据格式: { favorites: [...] } 或直接是数组
+      favoritesData = Array.isArray(data) ? data : (data?.favorites || []);
+      filterList();
+    });
+
+    // 窗口显示时聚焦
+    ipcRenderer.on('favorites-panel-focus', () => {
+      searchInput.focus();
+    });
+
+    // 请求加载数据
+    ipcRenderer.send('favorites-panel-load');
+
+    // 初始聚焦
+    setTimeout(() => searchInput.focus(), 50);
+  </script>
+</body>
+</html>

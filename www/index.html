@@ -1,0 +1,67 @@
+<!-- sidebar.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title></title>
+    <link rel="stylesheet" href="css/panel.css" />
+  </head>
+  <body>
+    <!-- 左侧垂直导航栏 -->
+    <nav id="provider-tabs">
+      <!-- 关闭按钮 - 固定在顶部 -->
+      <button id="closeBtn" type="button" title="退出应用" class="sidebar-close-btn">✕</button>
+      <!-- Provider tabs will be dynamically generated here -->
+    </nav>
+
+    <!-- 右侧主内容区 -->
+    <main id="main-content">
+      <!-- 拖动区域 - 用于移动窗口 -->
+      <div class="drag-zone"></div>
+      <div class="hover-zone"></div>
+      <div class="toolbar">
+        <button id="starBtn" type="button" title="Star/Unstar current page">☆</button>
+        <button id="backBtn" type="button" title="Return (Esc)" style="display:none;">Return</button>
+        <button id="alignBtn" type="button" title="Send to multiple AIs (Cmd+Shift+A)" style="display:none;">Align</button>
+        <div class="toolbar-spacer" title="拖动窗口"></div>
+        <button id="openInTab" type="button" title="Open in Chrome (Ctrl+O)">Open in Tab</button>
+        <button id="favoritesBtn" type="button" title="View favorites">Favorites</button>
+        <button id="searchBtn" type="button" title="Search in page">Search</button>
+        <button id="historyBtn" type="button" title="View saved links">History</button>
+      </div>
+      <!-- Settings modal -->
+      <div id="settingsModal" class="settings-modal" style="display:none;"></div>
+      <!-- Align modal -->
+      <div id="alignModal" class="align-modal" style="display:none;"></div>
+      <!-- 地址栏 - 仅在分屏模式下显示 -->
+      <div id="addressBar" class="address-bar" style="display:none;">
+        <div class="address-bar-wrapper">
+          <input type="text" id="addressInput" placeholder="输入网址或搜索内容..." />
+          <button id="tabLockRight" type="button" title="锁定 Tab 到右侧">Lock ▶︎</button>
+          <button id="addressGo" type="button" title="前往">前往</button>
+        </div>
+      </div>
+      <!-- 第三屏地址栏 - 三分屏时显示，功能与中间一致（控制第三屏） -->
+      <div id="addressBarThird" class="address-bar" style="display:none;">
+        <div class="address-bar-wrapper">
+          <input type="text" id="addressInputThird" placeholder="第三屏：输入网址或搜索内容..." />
+          <button id="tabLockThird" type="button" title="锁定 Tab 到第三屏">Lock ▶︎</button>
+          <button id="addressGoThird" type="button" title="前往第三屏">前往</button>
+        </div>
+      </div>
+      <div id="iframe"></div>
+      <!-- 第三屏容器 -->
+      <div id="thirdScreen" style="display:none;"></div>
+      <!-- 分屏分割线指示器 -->
+      <div id="splitDivider" class="split-divider" style="display:none;"></div>
+      <!-- 第三屏分割线指示器 -->
+      <div id="thirdDivider" class="split-divider" style="display:none;"></div>
+    </main>
+    <!-- Electron 适配器 - 必须在其他脚本之前加载 -->
+    <script src="electron-adapter.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/history-db.js"></script>
+    <script src="js/popup.js"></script>
+  </body>
+</html>

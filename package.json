@@ -12,6 +12,10 @@
     "update": "./update-app.sh"
   },
   "dependencies": {
+    "@capacitor/browser": "^8.0.0",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
     "electron-store": "^8.1.0"
   },
   "devDependencies": {
@@ -45,14 +49,19 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "images/image.png"
     },
     "dmg": {
       "sign": false
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "images/image.png"
     },
     "nsis": {
@@ -61,7 +70,9 @@
       "allowToChangeInstallationDirectory": false
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Utility",
       "icon": "images/image.png"
     }

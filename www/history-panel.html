@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: transparent;
+      -webkit-app-region: no-drag;
+      user-select: none;
+    }
+    .panel-container {
+      width: 500px;
+      max-height: 500px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2), 0 0 1px rgba(0,0,0,0.1);
+      border: 1px solid #ddd;
+      overflow: hidden;
+    }
+    /* 顶部工具栏 */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 12px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e0e0e0;
+      flex-shrink: 0;
+    }
+    .toolbar-btn {
+      padding: 6px 10px;
+      border: 1px solid #ddd;
+      background: #fff;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      color: #333;
+      transition: all 0.15s;
+    }
+    .toolbar-btn:hover {
+      background: #f0f0f0;
+      border-color: #ccc;
+    }
+    .toolbar-btn:active {
+      background: #e0e0e0;
+    }
+    .toolbar-btn.primary {
+      background: #4285f4;
+      color: #fff;
+      border-color: #4285f4;
+    }
+    .toolbar-btn.primary:hover {
+      background: #3367d6;
+    }
+    .toolbar-btn.danger {
+      color: #d32f2f;
+      border-color: #ffcdd2;
+    }
+    .toolbar-btn.danger:hover {
+      background: #ffebee;
+    }
+    .toolbar-spacer {
+      flex: 1;
+    }
+    .close-btn {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+    }
+    .close-btn:hover {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+    .close-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    /* 搜索栏 */
+    .search-bar {
+      padding: 8px 12px;
+      background: #fff;
+      border-bottom: 1px solid #e0e0e0;
+      flex-shrink: 0;
+    }
+    .search-input {
+      width: 100%;
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      background: #f8f9fa;
+    }
+    .search-input:focus {
+      border-color: #4285f4;
+      background: #fff;
+    }
+    /* 历史列表 */
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 380px;
+    }
+    .history-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      gap: 10px;
+      transition: background 0.15s;
+    }
+    .history-item:hover {
+      background: #f8f9fa;
+    }
+    .history-item.starred {
+      background: #fffde7;
+    }
+    .history-item.starred:hover {
+      background: #fff9c4;
+    }
+    .item-info {
+      flex: 1;
+      min-width: 0;
+      cursor: pointer;
+    }
+    .item-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .provider-tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+    .provider-tag.chatgpt { background: #10a37f; color: #fff; }
+    .provider-tag.claude { background: #d97757; color: #fff; }
+    .provider-tag.gemini { background: #4285f4; color: #fff; }
+    .provider-tag.deepseek { background: #0066ff; color: #fff; }
+    .provider-tag.grok { background: #1d9bf0; color: #fff; }
+    .provider-tag.poe { background: #5b4dc7; color: #fff; }
+    .provider-tag.perplexity { background: #20b8a0; color: #fff; }
+    .provider-tag.default { background: #757575; color: #fff; }
+    .item-title {
+      font-size: 13px;
+      color: #333;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .item-time {
+      font-size: 11px;
+      color: #999;
+    }
+    /* 操作按钮 */
+    .item-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .history-item:hover .item-actions {
+      opacity: 1;
+    }
+    .action-btn {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 12px;
+    }
+    .action-btn:hover {
+      background: #e8e8e8;
+    }
+    .action-btn.star {
+      color: #999;
+    }
+    .action-btn.star.active {
+      color: #ffc107;
+    }
+    .action-btn.star:hover {
+      color: #ffc107;
+    }
+    .action-btn.delete:hover {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+    .action-btn svg {
+      width: 14px;
+      height: 14px;
+    }
+    /* 空状态 */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      color: #999;
+    }
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+    .empty-state p {
+      font-size: 13px;
+    }
+    /* 滚动条 */
+    .history-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    .history-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .history-list::-webkit-scrollbar-thumb {
+      background: #ddd;
+      border-radius: 3px;
+    }
+    .history-list::-webkit-scrollbar-thumb:hover {
+      background: #ccc;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel-container">
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+      <button class="toolbar-btn primary" id="addCurrentBtn" title="添加当前页面">+ Add Current</button>
+      <button class="toolbar-btn" id="exportBtn" title="导出历史">导出</button>
+      <button class="toolbar-btn" id="importBtn" title="导入历史">导入</button>
+      <button class="toolbar-btn danger" id="clearAllBtn" title="清空所有历史">Clear All</button>
+      <div class="toolbar-spacer"></div>
+      <button class="close-btn" id="closeBtn" title="关闭 (Esc)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    
+    <!-- 搜索栏 -->
+    <div class="search-bar">
+      <input type="text" class="search-input" id="searchInput" placeholder="搜索历史记录...">
+    </div>
+    
+    <!-- 历史列表 -->
+    <div class="history-list" id="historyList">
+      <!-- 动态填充 -->
+    </div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    
+    const searchInput = document.getElementById('searchInput');
+    const historyList = document.getElementById('historyList');
+    const addCurrentBtn = document.getElementById('addCurrentBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const importBtn = document.getElementById('importBtn');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+    const closeBtn = document.getElementById('closeBtn');
+
+    let historyData = [];
+
+    // 获取 provider 标签样式类
+    function getProviderClass(provider) {
+      const p = (provider || '').toLowerCase();
+      if (p.includes('chatgpt') || p.includes('openai')) return 'chatgpt';
+      if (p.includes('claude') || p.includes('anthropic')) return 'claude';
+      if (p.includes('gemini') || p.includes('google')) return 'gemini';
+      if (p.includes('deepseek')) return 'deepseek';
+      if (p.includes('grok')) return 'grok';
+      if (p.includes('poe')) return 'poe';
+      if (p.includes('perplexity')) return 'perplexity';
+      return 'default';
+    }
+
+    // 格式化时间
+    function formatTime(timestamp) {
+      if (!timestamp) return '';
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diff = now - date;
+      
+      if (diff < 60000) return '刚刚';
+      if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
+      if (diff < 604800000) return Math.floor(diff / 86400000) + '天前';
+      
+      return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+    }
+
+    // 渲染历史列表
+    function renderHistory(items) {
+      if (!items || items.length === 0) {
+        historyList.innerHTML = `
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <p>暂无历史记录</p>
+          </div>
+        `;
+        return;
+      }
+
+      historyList.innerHTML = items.map((item, index) => `
+        <div class="history-item ${item.starred ? 'starred' : ''}" data-id="${item.id || index}">
+          <div class="item-info" data-action="open">
+            <div class="item-header">
+              <span class="provider-tag ${getProviderClass(item.provider)}">${item.provider || 'Unknown'}</span>
+              <span class="item-time">${formatTime(item.time || item.timestamp)}</span>
+            </div>
+            <div class="item-title" title="${item.title || item.url || ''}">${item.title || item.url || '无标题'}</div>
+          </div>
+          <div class="item-actions">
+            <button class="action-btn" data-action="open" title="打开">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+            <button class="action-btn" data-action="copy" title="复制链接">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+              </svg>
+            </button>
+            <button class="action-btn" data-action="rename" title="重命名">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+            </button>
+            <button class="action-btn star ${item.starred ? 'active' : ''}" data-action="star" title="收藏">
+              <svg viewBox="0 0 24 24" fill="${item.starred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+            </button>
+            <button class="action-btn delete" data-action="delete" title="删除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `).join('');
+
+      // 绑定事件
+      historyList.querySelectorAll('.history-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+          const action = e.target.closest('[data-action]')?.dataset.action;
+          const id = item.dataset.id;
+          if (action && id !== undefined) {
+            handleAction(action, id);
+          }
+        });
+      });
+    }
+
+    // 处理操作
+    function handleAction(action, id) {
+      const item = historyData.find(h => (h.id || historyData.indexOf(h)) == id);
+      switch (action) {
+        case 'open':
+          ipcRenderer.send('history-panel-open', item);
+          break;
+        case 'copy':
+          ipcRenderer.send('history-panel-copy', item);
+          break;
+        case 'rename':
+          const newTitle = prompt('重命名:', item?.title || '');
+          if (newTitle !== null) {
+            ipcRenderer.send('history-panel-rename', { ...item, newTitle });
+          }
+          break;
+        case 'star':
+          ipcRenderer.send('history-panel-star', item);
+          break;
+        case 'delete':
+          if (confirm('确定删除此记录?')) {
+            ipcRenderer.send('history-panel-delete', item);
+          }
+          break;
+      }
+    }
+
+    // 搜索过滤
+    function filterHistory(keyword) {
+      if (!keyword) {
+        renderHistory(historyData);
+        return;
+      }
+      const kw = keyword.toLowerCase();
+      const filtered = historyData.filter(item => 
+        (item.title || '').toLowerCase().includes(kw) ||
+        (item.provider || '').toLowerCase().includes(kw) ||
+        (item.url || '').toLowerCase().includes(kw)
+      );
+      renderHistory(filtered);
+    }
+
+    // 搜索输入
+    searchInput.addEventListener('input', (e) => {
+      filterHistory(e.target.value);
+    });
+
+    // 顶部按钮事件
+    addCurrentBtn.addEventListener('click', () => {
+      ipcRenderer.send('history-panel-add-current');
+    });
+
+    exportBtn.addEventListener('click', () => {
+      if (!historyData || historyData.length === 0) {
+        alert('没有可导出的历史记录');
+        return;
+      }
+      const dataStr = JSON.stringify(historyData, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ai-sidebar-history-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    importBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = async (e) => {
+        try {
+          const file = e.target.files[0];
+          if (!file) return;
+          const text = await file.text();
+          const imported = JSON.parse(text);
+          if (!Array.isArray(imported)) {
+            alert('无效的导入文件格式');
+            return;
+          }
+          ipcRenderer.send('history-panel-import-data', imported);
+        } catch (err) {
+          console.error('导入历史失败:', err);
+          alert('导入失败：' + String(err));
+        }
+      };
+      input.click();
+    });
+
+    clearAllBtn.addEventListener('click', () => {
+      if (confirm('确定要清空所有历史记录吗？此操作不可撤销。')) {
+        ipcRenderer.send('history-panel-clear-all');
+      }
+    });
+
+    closeBtn.addEventListener('click', () => {
+      ipcRenderer.send('history-panel-close');
+    });
+
+    // 键盘事件
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ipcRenderer.send('history-panel-close');
+      }
+    });
+
+    // 接收历史数据
+    ipcRenderer.on('history-panel-data', (event, data) => {
+      historyData = Array.isArray(data) ? data : (data?.history || []);
+      filterHistory(searchInput.value);
+    });
+
+    // 刷新列表
+    ipcRenderer.on('history-panel-refresh', () => {
+      ipcRenderer.send('history-panel-get-data');
+    });
+
+    // 窗口显示时聚焦
+    ipcRenderer.on('history-panel-focus', () => {
+      searchInput.focus();
+    });
+
+    // 初始化请求数据
+    setTimeout(() => {
+      ipcRenderer.send('history-panel-get-data');
+      searchInput.focus();
+    }, 50);
+  </script>
+</body>
+</html>
+　　
