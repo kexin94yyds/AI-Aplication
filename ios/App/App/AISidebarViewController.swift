@@ -32,6 +32,7 @@ class AISidebarViewController: UIViewController {
     private var selectedIndex: Int = 0
     private var favorites: [FavoriteItem] = []
     private var history: [HistoryItem] = []
+    private var hasLoadedInitialPage = false
     
     // UI Components
     private lazy var sidebarCollectionView: UICollectionView = {
@@ -133,7 +134,20 @@ class AISidebarViewController: UIViewController {
         loadFavorites()      // 加载收藏
         loadHistory()        // 加载历史记录
         setupUI()
-        loadInitialProvider()
+        
+        // 恢复上次的状态或加载初始页面
+        if !restoreLastState() {
+            loadInitialProvider()
+        }
+        hasLoadedInitialPage = true
+        
+        // 监听 app 进入后台和返回前台
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
     
     override func viewDidLayoutSubviews() {
@@ -157,11 +171,15 @@ class AISidebarViewController: UIViewController {
             AIProvider(id: "huggingface", name: "HuggingFace", icon: "huggingface", url: "https://huggingface.co/chat"),
             AIProvider(id: "metaai", name: "Meta AI", icon: "metaai", url: "https://www.meta.ai"),
             AIProvider(id: "doubao", name: "豆包", icon: "doubao", url: "https://www.doubao.com"),
-            AIProvider(id: "tongyi", name: "通义千问", icon: "qwen", url: "https://tongyi.aliyun.com"),
+            AIProvider(id: "tongyi", name: "通义千问", icon: "tongyi", url: "https://tongyi.aliyun.com"),
             AIProvider(id: "kimi", name: "Kimi", icon: "kimi", url: "https://kimi.moonshot.cn"),
             AIProvider(id: "zhipu", name: "智谱清言", icon: "zhipu", url: "https://chatglm.cn"),
             AIProvider(id: "minimax", name: "海螺AI", icon: "minimax", url: "https://hailuoai.com"),
             AIProvider(id: "notebooklm", name: "NotebookLM", icon: "notebooklm", url: "https://notebooklm.google.com"),
+            AIProvider(id: "codex", name: "Codex", icon: "openai", url: "https://chatgpt.com/codex"),
+            AIProvider(id: "aistudio", name: "AI Studio", icon: "aistudio", url: "https://aistudio.google.com/apps"),
+            AIProvider(id: "genspark", name: "Genspark", icon: "genspark", url: "https://www.genspark.ai"),
+            AIProvider(id: "google", name: "Google", icon: "google", url: "https://www.google.com"),
         ]
     }
     
@@ -483,6 +501,44 @@ class AISidebarViewController: UIViewController {
            let saved = try? JSONDecoder().decode([HistoryItem].self, from: data) {
             history = saved
         }
+    }
+    
+    // MARK: - App Lifecycle
+    @objc private func appWillResignActive() {
+        // 保存当前状态
+        saveCurrentState()
+    }
+    
+    @objc private func appDidBecomeActive() {
+        // 返回前台时不做任何操作，保持当前页面
+        print("[AISidebar] App became active, keeping current state")
+    }
+    
+    private func saveCurrentState() {
+        // 保存当前 URL 和选中的 provider
+        if let currentURL = webView.url?.absoluteString {
+            UserDefaults.standard.set(currentURL, forKey: "AILastURL")
+            UserDefaults.standard.set(selectedIndex, forKey: "AILastProviderIndex")
+            print("[AISidebar] Saved state: \(currentURL)")
+        }
+    }
+    
+    private func restoreLastState() -> Bool {
+        // 恢复上次的 URL
+        guard let lastURL = UserDefaults.standard.string(forKey: "AILastURL"),
+              let url = URL(string: lastURL) else {
+            return false
+        }
+        
+        selectedIndex = UserDefaults.standard.integer(forKey: "AILastProviderIndex")
+        if selectedIndex >= providers.count {
+            selectedIndex = 0
+        }
+        
+        webView.load(URLRequest(url: url))
+        sidebarCollectionView.reloadData()
+        print("[AISidebar] Restored state: \(lastURL)")
+        return true
     }
     
     // MARK: - Provider Order Persistence
