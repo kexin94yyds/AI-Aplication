@@ -350,6 +350,101 @@ contextBridge.exposeInMainWorld('electronAPI', {
     } catch (e) {
       console.error('[Preload] closeWindow error:', e);
     }
+  },
+
+  // 页面内搜索 (Cmd+F)
+  findInPage: (text, options = {}) => {
+    try {
+      ipcRenderer.send('find-in-page', { text, options });
+    } catch (e) {
+      console.error('[Preload] findInPage error:', e);
+    }
+  },
+  findInPageNext: (text) => {
+    try {
+      ipcRenderer.send('find-in-page', { text, options: { forward: true, findNext: true } });
+    } catch (e) {
+      console.error('[Preload] findInPageNext error:', e);
+    }
+  },
+  findInPagePrev: (text) => {
+    try {
+      ipcRenderer.send('find-in-page', { text, options: { forward: false, findNext: true } });
+    } catch (e) {
+      console.error('[Preload] findInPagePrev error:', e);
+    }
+  },
+  stopFindInPage: () => {
+    try {
+      ipcRenderer.send('stop-find-in-page');
+    } catch (e) {
+      console.error('[Preload] stopFindInPage error:', e);
+    }
+  },
+  onFindInPageResult: (callback) => {
+    ipcRenderer.on('find-in-page-result', (event, result) => {
+      try { callback(result); } catch (_) {}
+    });
+  },
+  onToggleSearch: (callback) => {
+    ipcRenderer.on('toggle-search', () => {
+      try { callback(); } catch (_) {}
+    });
+  },
+  focusRenderer: () => {
+    try { ipcRenderer.send('focus-renderer'); } catch (_) {}
+  },
+
+  // ============== History 面板 ==============
+  toggleHistoryPanel: () => {
+    try { ipcRenderer.send('toggle-history-panel'); } catch (_) {}
+  },
+  onGetHistoryData: (cb) => {
+    ipcRenderer.on('get-history-data', () => { try { cb(); } catch (_) {} });
+  },
+  sendHistoryData: (data) => {
+    try { ipcRenderer.send('history-panel-data', data); } catch (_) {}
+  },
+  onOpenHistoryItem: (cb) => {
+    ipcRenderer.on('open-history-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  onExportHistory: (cb) => {
+    ipcRenderer.on('export-history', () => { try { cb(); } catch (_) {} });
+  },
+  onImportHistory: (cb) => {
+    ipcRenderer.on('import-history', () => { try { cb(); } catch (_) {} });
+  },
+  onImportHistoryData: (cb) => {
+    ipcRenderer.on('import-history-data', (e, data) => { try { cb(data); } catch (_) {} });
+  },
+  onClearAllHistory: (cb) => {
+    ipcRenderer.on('clear-all-history', () => { try { cb(); } catch (_) {} });
+  },
+
+  // ============== Favorites 面板 ==============
+  toggleFavoritesPanel: () => {
+    try { ipcRenderer.send('toggle-favorites-panel'); } catch (_) {}
+  },
+  onGetFavoritesData: (cb) => {
+    ipcRenderer.on('get-favorites-data', () => { try { cb(); } catch (_) {} });
+  },
+  sendFavoritesData: (data) => {
+    try { ipcRenderer.send('favorites-panel-data', data); } catch (_) {}
+  },
+  onOpenFavoritesItem: (cb) => {
+    ipcRenderer.on('open-favorites-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  onExportFavorites: (cb) => {
+    ipcRenderer.on('export-favorites', () => { try { cb(); } catch (_) {} });
+  },
+  onImportFavorites: (cb) => {
+    ipcRenderer.on('import-favorites', () => { try { cb(); } catch (_) {} });
+  },
+  onImportFavoritesData: (cb) => {
+    ipcRenderer.on('import-favorites-data', (e, data) => { try { cb(data); } catch (_) {} });
+  },
+  onClearAllFavorites: (cb) => {
+    ipcRenderer.on('clear-all-favorites', () => { try { cb(); } catch (_) {} });
   }
 });
 

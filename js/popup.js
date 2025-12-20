@@ -132,11 +132,11 @@ const PROVIDERS = {
     iframeUrl: 'https://ima.qq.com/',
     authCheck: null
   },
-  attention_local: {
-    label: 'Attention (Local)',
+  attention: {
+    label: 'Attention Tracker',
     icon: 'images/时间管道.JPG',
-    baseUrl: 'vendor/attention/index.html',
-    iframeUrl: 'vendor/attention/index.html',
+    baseUrl: 'https://attention-span-tracker.netlify.app',
+    iframeUrl: 'https://attention-span-tracker.netlify.app/',
     authCheck: null
   },
   mubu: {
@@ -663,7 +663,7 @@ async function importHistory() {
         const newItems = imported.filter(x => x && x.url && !currentUrls.has(normalizeUrlForMatch(x.url)));
         const merged = [...newItems, ...current].slice(0, 500);
         await saveHistory(merged);
-        renderHistoryPanel();
+        // 面板已改为浮动子窗口，无需调用 renderHistoryPanel
         alert(`已导入 ${newItems.length} 条新记录`);
       } catch (err) {
         console.error('导入历史记录失败:', err);
@@ -790,316 +790,6 @@ function normalizeUrlForMatch(uStr) {
   } catch (_) {
     return String(uStr || '');
   }
-}
-async function renderHistoryPanel() {
-  try {
-    const panel = document.getElementById('historyPanel');
-    if (!panel) return;
-    const list = await loadHistory();
-    const favList = await loadFavorites();
-    const favSet = new Set((favList||[]).map(x=> normalizeUrlForMatch(x.url)));
-    const favTitleByNorm = {};
-    (favList || []).forEach((f) => {
-      try {
-        const norm = normalizeUrlForMatch(f.url);
-        if (!norm) return;
-        const t = (f && typeof f.title === 'string') ? f.title.trim() : '';
-        if (t) favTitleByNorm[norm] = t;
-      } catch (_) {}
-    });
-    const rows = (list || []).map((it)=>{
-      const date = new Date(it.time||Date.now());
-      const ds = date.toLocaleString();
-      // 如果该 URL 已经被收藏，则优先使用 Favorites 中的名称，保证历史与收藏显示一致。
-      const normUrl = normalizeUrlForMatch(it.url);
-      const favTitle = favTitleByNorm[normUrl] || '';
-      const providerLabel = historySourceLabel(it);
-      // Always show an informative title. If storage carries needsTitle with empty title,
-      // fall back to a derived title so the row never appears blank.
-      const baseTitle = (it && it.title && it.title.trim())
-        ? it.title
-        : (deriveTitle(it.provider, it.url, '') || '');
-      const titleToShow = clampTitle(favTitle || baseTitle);
-      const escTitle = titleToShow.replace(/[<>]/g,'');
-      const isStarred = favSet.has(normalizeUrlForMatch(it.url));
-      const starClass = isStarred ? 'hp-star active' : 'hp-star';
-      const starTitle = isStarred ? 'Unstar' : 'Star';
-      return `<div class="hp-item" data-url="${escapeAttr(it.url)}">
-        <span class="hp-provider">${providerLabel}</span>
-        <span class="hp-title" data-url="${escapeAttr(it.url)}" title="${escTitle}">${escTitle}</span>
-        <span class="hp-time">${ds}</span>
-        <span class="hp-actions">
-          <button class="hp-open" data-url="${escapeAttr(it.url)}" data-provider="${it.provider||''}">Open</button>
-          <button class="hp-copy" data-url="${escapeAttr(it.url)}">Copy</button>
-          <button class="hp-rename" data-url="${escapeAttr(it.url)}">Rename</button>
-          <button class="${starClass}" data-url="${escapeAttr(it.url)}" title="${starTitle}">★</button>
-        </span>
-      </div>`;
-    }).join('');
-    panel.innerHTML = `<div class=\"hp-header\">\n      <span>History</span>\n      <span class=\"hp-header-actions\">\n        <button id=\"hp-add-current\">Add Current</button>\n        <button id=\"hp-export\">导出</button>\n        <button id=\"hp-import\">导入</button>\n        <button id=\"hp-clear-all\">Clear</button>\n        <button id=\"hp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"hp-search-row\">\n      <span class=\"hp-search-icon\"></span>\n      <input id=\"hp-search-input\" class=\"hp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"hp-list\">${rows || ''}</div>`;
-    // events
-    panel.querySelector('#hp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
-    panel.querySelector('#hp-clear-all')?.addEventListener('click', async ()=>{ await saveHistory([]); renderHistoryPanel(); });
-    panel.querySelector('#hp-export')?.addEventListener('click', exportHistory);
-    panel.querySelector('#hp-import')?.addEventListener('click', importHistory);
-    panel.querySelector('#hp-add-current')?.addEventListener('click', async ()=>{
-      try {
-        const a = document.getElementById('openInTab');
-        const href = a && a.href;
-        const provider = (await getProvider())||'chatgpt';
-        if (href) {
-          __pendingInlineEditUrl = href;
-          __pendingInlineEditCloseOnEnter = true;
-          const suggested = (currentTitleByProvider[provider] || document.title || '').trim();
-          await addHistory({ url: href, provider, title: suggested, needsTitle: true });
-          renderHistoryPanel();
-        }
-      } catch (_) {}
-    });
-    panel.querySelectorAll('.hp-open')?.forEach((btn)=>{
-      btn.addEventListener('click', async (e)=>{
-        try {
-          const raw = e.currentTarget.getAttribute('data-url');
-          const url = normalizeUrlAttr(raw);
-          const providerKey = e.currentTarget.getAttribute('data-provider');
-          if (!url) return;
-          // 确保恢复 BrowserView，再进行跳转
-          try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
-          
-          const container = document.getElementById('iframe');
-          const overrides = await getOverrides();
-          const customProviders = await loadCustomProviders();
-          const ALL = { ...PROVIDERS };
-          (customProviders || []).forEach((c) => { ALL[c.key] = c; });
-
-          if (providerKey && ALL[providerKey]) {
-            // 这条历史有明确的 provider（左侧图标），按与 Favorites 一致的逻辑在左侧主视图中打开
-            await setProvider(providerKey);
-            const p = effectiveConfig(ALL, providerKey, overrides);
-
-            const openInTab = document.getElementById('openInTab');
-            if (openInTab) {
-              openInTab.dataset.url = url;
-              try { openInTab.title = url; } catch (_) {}
-            }
-
-            if (p.authCheck) {
-              const auth = await p.authCheck();
-              if (auth.state === 'authorized') {
-                await ensureFrame(container, providerKey, p);
-              } else {
-                renderMessage(container, auth.message || 'Please login.');
-              }
-            } else {
-              await ensureFrame(container, providerKey, p);
-            }
-
-            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
-              window.electronAPI.switchProvider({ key: providerKey, url });
-            } else {
-              const frame = cachedFrames[providerKey];
-              if (frame && frame.contentWindow) {
-                try {
-                  frame.contentWindow.location.href = url;
-                } catch (err) {
-                  frame.src = url;
-                }
-              }
-            }
-
-            renderProviderTabs(providerKey);
-            await updateStarButtonState();
-          } else {
-            // 没有 provider（例如 YouTube 等普通网页）：
-            // 与 Favorites 打开方式保持一致——在左侧主视图中全屏展示，而不是右侧内嵌浏览器。
-            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
-              try {
-                // 使用动态 provider key（如 'web'），交给主进程创建 BrowserView
-                const key = providerKey || 'web';
-                window.electronAPI.switchProvider({ key, url });
-                setActiveSide('left');
-              } catch (_) {}
-            } else {
-              // 浏览器扩展环境：退化为在新标签页打开
-              try { window.open(url, '_blank', 'noopener'); } catch (_) {}
-            }
-          }
-          
-          // Close the history panel（并保证退出覆盖模式）
-          try { document.getElementById('historyBackdrop')?.remove(); } catch (_) {}
-          panel.style.display = 'none';
-        } catch (err) {
-          console.error('Error opening history item in sidebar:', err);
-        }
-      });
-    });
-    panel.querySelectorAll('.hp-copy')?.forEach((btn)=>{
-      btn.addEventListener('click', async (e)=>{
-        try {
-          const raw = e.currentTarget.getAttribute('data-url');
-          const url = normalizeUrlAttr(raw);
-          await navigator.clipboard.writeText(url);
-        } catch (_) {}
-      });
-    });
-    // Remove action removed by request; Clear-all remains available
-    // Star/unstar from history list - only toggle star, don't open Favorites panel
-    panel.querySelectorAll('.hp-star')?.forEach((btn)=>{
-      btn.addEventListener('click', async (e)=>{
-        e.stopPropagation(); // Prevent event bubbling
-        const url = e.currentTarget.getAttribute('data-url');
-        const isActive = e.currentTarget.classList.contains('active');
-        const toolbarProvider = (await getProvider())||'chatgpt';
-        const normalizedUrl = normalizeUrlForMatch(url);
-        if (isActive) {
-          // Unstar
-          const favs = await loadFavorites();
-          await saveFavorites(favs.filter((x)=> normalizeUrlForMatch(x.url) !== normalizedUrl));
-        } else {
-          // Star：优先使用当前这条历史记录自己的标题，而不是左侧 Provider 的标题，
-          // 以免把 YouTube 等网页标题覆盖成「ChatGPT xxx」。
-          let provider = toolbarProvider;
-          let suggested = '';
-          try {
-            const list = await loadHistory();
-            const found = (list || []).find((x)=> normalizeUrlForMatch(x.url) === normalizedUrl);
-            if (found) {
-              if (found.provider) provider = found.provider;
-              if (found.title) suggested = String(found.title || '').trim();
-            }
-          } catch (_) {}
-          if (!suggested) {
-            const fallback = (currentTitleByProvider[toolbarProvider] || document.title || '').trim();
-            suggested = normalizeWebHistoryTitle(url, fallback) || fallback;
-          }
-          // needsTitle: true => addFavorite 将直接使用我们给定的标题，不再调用 deriveTitle
-          await addFavorite({ url, provider, title: suggested, needsTitle: true });
-        }
-        // Update history panel to show new star state
-        renderHistoryPanel();
-        // Update the Star button in toolbar if this URL is currently displayed
-        try {
-          const openInTab = document.getElementById('openInTab');
-          const currentUrl = openInTab && openInTab.dataset.url;
-          if (currentUrl && normalizeUrlForMatch(currentUrl) === normalizedUrl) {
-            await updateStarButtonState();
-          }
-        } catch (_) {}
-      });
-    });
-    const beginInlineEdit = (titleEl, options) => {
-      try {
-        const row = titleEl.closest('.hp-item');
-        const url = normalizeUrlAttr(row?.getAttribute('data-url'));
-        const orig = titleEl.textContent || '';
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = orig;
-        input.className = 'hp-title-input';
-        titleEl.replaceWith(input);
-        input.focus(); input.select();
-        const closeOnEnter = !!(options && options.closeOnEnter);
-        const finish = async (save, how) => {
-          try {
-            const newTitle = save ? (input.value || '').trim() : orig;
-            const list = await loadHistory();
-            const idx = list.findIndex((x)=> x.url === url);
-            if (idx >= 0 && save && newTitle) {
-              // Clear needsTitle once a custom title is saved and clamp length
-              list[idx] = { ...list[idx], title: clampTitle(newTitle), needsTitle: false };
-              await saveHistory(list);
-            }
-          } catch (_) {}
-          renderHistoryPanel();
-          // If this inline edit was initiated by Add Current and Enter was pressed, close panel
-          try {
-            if (how === 'enter' && closeOnEnter) {
-              if (typeof window.hideHistoryPanel === 'function') {
-                window.hideHistoryPanel();
-              } else {
-                const p = document.getElementById('historyPanel');
-                if (p) p.style.display = 'none';
-                try { document.getElementById('historyBackdrop')?.remove(); } catch (_) {}
-              }
-            }
-          } catch (_) {}
-        };
-        input.addEventListener('keydown', (e)=>{
-          if (e.key === 'Enter') finish(true, 'enter');
-          if (e.key === 'Escape') finish(false, 'escape');
-        });
-        input.addEventListener('blur', ()=> finish(true, 'blur'));
-      } catch (_) {}
-    };
-    panel.querySelectorAll('.hp-title')?.forEach((el)=>{
-      el.addEventListener('click', ()=> beginInlineEdit(el));
-    });
-    panel.querySelectorAll('.hp-rename')?.forEach((btn)=>{
-      btn.addEventListener('click', (e)=>{
-        const row = e.currentTarget.closest('.hp-item');
-        const titleEl = row?.querySelector('.hp-title');
-        if (titleEl) beginInlineEdit(titleEl);
-      });
-    });
-
-    // --- Search controls (always visible below header) ---
-    try {
-      const searchInput = panel.querySelector('#hp-search-input');
-      const filterRows = (qRaw) => {
-        const q = (qRaw || '').toLowerCase();
-        __historySearchQuery = qRaw || '';
-        let matchCount = 0;
-        panel.querySelectorAll('.hp-item')?.forEach((row)=>{
-          const title = (row.querySelector('.hp-title')?.textContent || '').toLowerCase();
-          const url = (row.getAttribute('data-url') || '').toLowerCase();
-          const provider = (row.querySelector('.hp-provider')?.textContent || '').toLowerCase();
-          const ok = !q || title.includes(q) || url.includes(q) || provider.includes(q);
-          row.style.display = ok ? 'flex' : 'none';
-          if (ok) matchCount++;
-        });
-        const emptyId = 'hp-search-empty';
-        let empty = panel.querySelector('#'+emptyId);
-        if (matchCount === 0 && (panel.querySelectorAll('.hp-item').length > 0)) {
-          if (!empty) {
-            empty = document.createElement('div');
-            empty.id = emptyId;
-            empty.style.padding = '8px 12px';
-            empty.style.color = '#64748b';
-            empty.textContent = 'No matches';
-            panel.querySelector('.hp-list')?.appendChild(empty);
-          }
-        } else if (empty && matchCount > 0) {
-          empty.remove();
-        }
-      };
-      if (searchInput) {
-        searchInput.value = __historySearchQuery;
-        let __searchDebounce = null;
-        searchInput.addEventListener('input', (e)=>{
-          const v = e.currentTarget.value;
-          if (__searchDebounce) clearTimeout(__searchDebounce);
-          __searchDebounce = setTimeout(()=> filterRows(v), 80);
-        });
-        // If we are about to start an inline rename (after clicking Add Current),
-        // do NOT steal focus to the search box. Keep focus on the rename input.
-        if (!__pendingInlineEditUrl) {
-          setTimeout(()=>{ try { searchInput.focus(); searchInput.select(); } catch(_){} }, 0);
-        }
-        filterRows(__historySearchQuery);
-      }
-    } catch (_) {}
-
-    // If we have a pending inline edit request (from toolbar Add), start it now
-    if (__pendingInlineEditUrl) {
-      try {
-        const row = panel.querySelector(`.hp-item[data-url="${CSS.escape(__pendingInlineEditUrl)}"]`);
-        const titleEl = row?.querySelector('.hp-title');
-        if (titleEl) beginInlineEdit(titleEl, { closeOnEnter: !!__pendingInlineEditCloseOnEnter });
-      } catch (_) { /* no-op */ }
-      __pendingInlineEditUrl = null;
-      __pendingInlineEditCloseOnEnter = false;
-    }
-  } catch (_) {}
 }
 
 // ---- Favorites store helpers ----
@@ -1228,7 +918,7 @@ async function importFavorites() {
         const newItems = imported.filter(x => x && x.url && !currentUrls.has(normalizeUrlForMatch(x.url)));
         const merged = [...newItems, ...current].slice(0, 500);
         await saveFavorites(merged);
-        renderFavoritesPanel();
+        // 面板已改为浮动子窗口，无需调用 renderFavoritesPanel
         alert(`已导入 ${newItems.length} 条新收藏`);
       } catch (err) {
         console.error('导入收藏失败:', err);
@@ -1240,243 +930,6 @@ async function importFavorites() {
     console.error('导入收藏失败:', err);
     alert('导入失败：' + String(err));
   }
-}
-
-async function renderFavoritesPanel() {
-  try {
-    const panel = document.getElementById('favoritesPanel');
-    if (!panel) return;
-    const list = await loadFavorites();
-    const rows = (list || []).map((it)=>{
-      const date = new Date(it.time||Date.now());
-      const ds = date.toLocaleString();
-      const titleToShow = clampTitle((it && it.title && it.title.trim())
-        ? it.title
-        : (deriveTitle(it.provider, it.url, '') || ''));
-      const escTitle = titleToShow.replace(/[<>]/g,'');
-      const providerLabel = historySourceLabel(it);
-      return `<div class="fp-item" data-url="${it.url}">
-        <span class="fp-provider">${providerLabel}</span>
-        <span class="fp-title" data-url="${it.url}" title="${escTitle}">${escTitle}</span>
-        <span class="fp-time">${ds}</span>
-        <span class="fp-actions-row">
-          <button class="fp-open" data-url="${it.url}" data-provider="${it.provider||''}">Open</button>
-          <button class="fp-copy" data-url="${it.url}">Copy</button>
-          <button class="fp-rename" data-url="${it.url}">Rename</button>
-          <button class="fp-remove" data-url="${it.url}">Remove</button>
-        </span>
-      </div>`;
-    }).join('');
-    panel.innerHTML = `<div class=\"fp-header\">\n      <span>Favorites</span>\n      <span class=\"fp-actions\">\n        <button id=\"fp-add-current\">Add Current</button>\n        <button id=\"fp-export\">导出</button>\n        <button id=\"fp-import\">导入</button>\n        <button id=\"fp-clear-all\">Clear</button>\n        <button id=\"fp-close\">Close</button>\n      </span>\n    </div>\n    <div class=\"fp-search-row\">\n      <span class=\"fp-search-icon\"></span>\n      <input id=\"fp-search-input\" class=\"fp-search-input\" type=\"text\" placeholder=\"搜索\" />\n    </div>\n    <div class=\"fp-list\">${rows || ''}</div>`;
-
-    panel.querySelector('#fp-close')?.addEventListener('click', ()=> { try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}; panel.style.display='none'; });
-    panel.querySelector('#fp-clear-all')?.addEventListener('click', async ()=>{ await saveFavorites([]); renderFavoritesPanel(); });
-    panel.querySelector('#fp-export')?.addEventListener('click', exportFavorites);
-    panel.querySelector('#fp-import')?.addEventListener('click', importFavorites);
-    
-    panel.querySelector('#fp-add-current')?.addEventListener('click', async ()=>{
-      try {
-        const href = await getCurrentDisplayedUrl();
-        const provider = (await getProvider())||'chatgpt';
-        if (href) {
-          __pendingFavInlineEditUrl = href;
-          __pendingFavCloseOnEnter = true;
-          const suggested = (currentTitleByProvider[provider] || document.title || '').trim();
-          await addFavorite({ url: href, provider, title: suggested, needsTitle: true });
-          renderFavoritesPanel();
-        }
-      } catch (_) {}
-    });
-    panel.querySelectorAll('.fp-open')?.forEach((btn)=>{
-      btn.addEventListener('click', async (e)=>{
-        try {
-          const url = e.currentTarget.getAttribute('data-url');
-          const providerKey = e.currentTarget.getAttribute('data-provider');
-          if (!url) return;
-          // 确保恢复 BrowserView，再进行跳转
-          try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
-          
-          // Load the URL in the main (left) view, same behavior as History "Open"
-          const container = document.getElementById('iframe');
-          const overrides = await getOverrides();
-          const customProviders = await loadCustomProviders();
-          const ALL = { ...PROVIDERS };
-          (customProviders || []).forEach((c) => { ALL[c.key] = c; });
-          
-          if (providerKey && ALL[providerKey]) {
-            await setProvider(providerKey);
-            const p = effectiveConfig(ALL, providerKey, overrides);
-            
-            const openInTab = document.getElementById('openInTab');
-            if (openInTab) {
-              openInTab.dataset.url = url;
-              try { openInTab.title = url; } catch (_) {}
-            }
-            
-            if (p.authCheck) {
-              const auth = await p.authCheck();
-              if (auth.state === 'authorized') {
-                await ensureFrame(container, providerKey, p);
-              } else {
-                renderMessage(container, auth.message || 'Please login.');
-              }
-            } else {
-              await ensureFrame(container, providerKey, p);
-            }
-            
-            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
-              window.electronAPI.switchProvider({ key: providerKey, url });
-            } else {
-              const frame = cachedFrames[providerKey];
-              if (frame && frame.contentWindow) {
-                try {
-                  frame.contentWindow.location.href = url;
-                } catch (err) {
-                  frame.src = url;
-                }
-              }
-            }
-            
-            renderProviderTabs(providerKey);
-            await updateStarButtonState();
-          } else {
-            // 没有 provider（例如 YouTube 等普通网页）：在左侧主视图中全屏打开
-            if (IS_ELECTRON && window.electronAPI?.switchProvider) {
-              try {
-                const key = providerKey || 'web';
-                window.electronAPI.switchProvider({ key, url });
-                setActiveSide('left');
-              } catch (_) {}
-            } else {
-              try { window.open(url, '_blank', 'noopener'); } catch (_) {}
-            }
-          }
-          
-          // Close the favorites panel（并保证退出覆盖模式）
-          try { document.getElementById('favoritesBackdrop')?.remove(); } catch (_) {}
-          panel.style.display = 'none';
-       } catch (err) {
-          console.error('Error opening favorite in sidebar:', err);
-        }
-      });
-    });
-    panel.querySelectorAll('.fp-copy')?.forEach((btn)=>{
-      btn.addEventListener('click', async (e)=>{
-        try { await navigator.clipboard.writeText(e.currentTarget.getAttribute('data-url')); } catch (_) {}
-      });
-    });
-    panel.querySelectorAll('.fp-remove')?.forEach((btn)=>{
-      btn.addEventListener('click', async (e)=>{
-        const url = e.currentTarget.getAttribute('data-url');
-        const list = await loadFavorites();
-        await saveFavorites(list.filter((x)=> x.url !== url));
-        renderFavoritesPanel();
-      });
-    });
-    const beginInlineEdit = (titleEl, options) => {
-      try {
-        const row = titleEl.closest('.fp-item');
-        const url = row?.getAttribute('data-url');
-        const orig = titleEl.textContent || '';
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = orig;
-        input.className = 'fp-title-input';
-        titleEl.replaceWith(input);
-        input.focus(); input.select();
-        const closeOnEnter = !!(options && options.closeOnEnter);
-        const finish = async (save, how) => {
-          try {
-            const newTitle = save ? (input.value || '').trim() : orig;
-            const list = await loadFavorites();
-            const idx = list.findIndex((x)=> x.url === url);
-            if (idx >= 0 && save && newTitle) {
-              list[idx] = { ...list[idx], title: clampTitle(newTitle) };
-              await saveFavorites(list);
-            }
-          } catch (_) {}
-          renderFavoritesPanel();
-          try {
-            if (how === 'enter' && closeOnEnter) {
-              const p = document.getElementById('favoritesPanel');
-              if (p) p.style.display = 'none';
-              try { document.getElementById('favoritesBackdrop')?.remove(); } catch (_) {}
-            }
-          } catch (_) {}
-        };
-        input.addEventListener('keydown', (e)=>{
-          if (e.key === 'Enter') finish(true, 'enter');
-          if (e.key === 'Escape') finish(false, 'escape');
-        });
-        input.addEventListener('blur', ()=> finish(true, 'blur'));
-      } catch (_) {}
-    };
-    panel.querySelectorAll('.fp-title')?.forEach((el)=>{
-      el.addEventListener('click', ()=> beginInlineEdit(el));
-    });
-    panel.querySelectorAll('.fp-rename')?.forEach((btn)=>{
-      btn.addEventListener('click', (e)=>{
-        const row = e.currentTarget.closest('.fp-item');
-        const titleEl = row?.querySelector('.fp-title');
-        if (titleEl) beginInlineEdit(titleEl);
-      });
-    });
-
-    // Search
-    try {
-      const searchInput = panel.querySelector('#fp-search-input');
-      const filterRows = (qRaw) => {
-        const q = (qRaw || '').toLowerCase();
-        __favSearchQuery = qRaw || '';
-        let matchCount = 0;
-        panel.querySelectorAll('.fp-item')?.forEach((row)=>{
-          const title = (row.querySelector('.fp-title')?.textContent || '').toLowerCase();
-          const url = (row.getAttribute('data-url') || '').toLowerCase();
-          const provider = (row.querySelector('.fp-provider')?.textContent || '').toLowerCase();
-          const ok = !q || title.includes(q) || url.includes(q) || provider.includes(q);
-          row.style.display = ok ? 'flex' : 'none';
-          if (ok) matchCount++;
-        });
-        const emptyId = 'fp-search-empty';
-        let empty = panel.querySelector('#'+emptyId);
-        if (matchCount === 0 && (panel.querySelectorAll('.fp-item').length > 0)) {
-          if (!empty) {
-            empty = document.createElement('div');
-            empty.id = emptyId;
-            empty.style.padding = '8px 12px';
-            empty.style.color = '#64748b';
-            empty.textContent = 'No matches';
-            panel.querySelector('.fp-list')?.appendChild(empty);
-          }
-        } else if (empty && matchCount > 0) {
-          empty.remove();
-        }
-      };
-      if (searchInput) {
-        searchInput.value = __favSearchQuery;
-        let __searchDebounce = null;
-        searchInput.addEventListener('input', (e)=>{
-          const v = e.currentTarget.value;
-          if (__searchDebounce) clearTimeout(__searchDebounce);
-          __searchDebounce = setTimeout(()=> filterRows(v), 80);
-        });
-        if (!__pendingFavInlineEditUrl) {
-          setTimeout(()=>{ try { searchInput.focus(); searchInput.select(); } catch(_){} }, 0);
-        }
-        filterRows(__favSearchQuery);
-      }
-    } catch (_) {}
-
-    if (__pendingFavInlineEditUrl) {
-      try {
-        const row = panel.querySelector(`.fp-item[data-url="${CSS.escape(__pendingFavInlineEditUrl)}"]`);
-        const titleEl = row?.querySelector('.fp-title');
-        if (titleEl) beginInlineEdit(titleEl, { closeOnEnter: !!__pendingFavCloseOnEnter });
-      } catch (_) {}
-      __pendingFavInlineEditUrl = null;
-      __pendingFavCloseOnEnter = false;
-    }
-  } catch (_) {}
 }
 
 const showOnlyFrame = (container, key) => {
@@ -3013,7 +2466,7 @@ const initializeBar = async () => {
       if (bd && bd.parentNode) bd.parentNode.removeChild(bd);
     };
     const showHistoryPanel = async () => {
-      await renderHistoryPanel();
+      // renderHistoryPanel 已移除，Electron 使用浮动子窗口
       panel.style.display = 'block';
       ensureBackdrop();
       if (!__historyOpen && shouldUseOverlay()) {
@@ -3032,12 +2485,20 @@ const initializeBar = async () => {
     window.hideHistoryPanel = hideHistoryPanel; // expose for other handlers if needed
     window.showHistoryPanel = showHistoryPanel;
 
-    if (hBtn && panel) {
+    if (hBtn) {
       hBtn.addEventListener('click', async () => {
-        if (panel.style.display === 'none' || !panel.style.display) {
-          await showHistoryPanel();
-        } else {
-          hideHistoryPanel();
+        // Electron 使用浮动子窗口
+        if (IS_ELECTRON && window.electronAPI?.toggleHistoryPanel) {
+          window.electronAPI.toggleHistoryPanel();
+          return;
+        }
+        // 非 Electron 环境（已废弃）
+        if (panel) {
+          if (panel.style.display === 'none' || !panel.style.display) {
+            await showHistoryPanel();
+          } else {
+            hideHistoryPanel();
+          }
         }
       });
     }
@@ -3091,7 +2552,7 @@ const initializeBar = async () => {
       if (bd && bd.parentNode) bd.parentNode.removeChild(bd);
     };
     const showFavoritesPanel = async () => {
-      await renderFavoritesPanel();
+      // renderFavoritesPanel 已移除，Electron 使用浮动子窗口
       panel.style.display = 'block';
       ensureBackdrop();
       if (!__favoritesOpen && shouldUseOverlay()) {
@@ -3110,13 +2571,21 @@ const initializeBar = async () => {
     window.hideFavoritesPanel = hideFavoritesPanel;
     window.showFavoritesPanel = showFavoritesPanel;
 
-    if (fBtn && panel) {
+    if (fBtn) {
       // Click Favorites button to toggle favorites panel (show all starred items)
       fBtn.addEventListener('click', async () => {
-        if (panel.style.display === 'none' || !panel.style.display) {
-          await showFavoritesPanel();
-        } else {
-          hideFavoritesPanel();
+        // Electron: use floating panel window
+        if (IS_ELECTRON && window.electronAPI?.toggleFavoritesPanel) {
+          window.electronAPI.toggleFavoritesPanel();
+          return;
+        }
+        // 非 Electron 环境（已废弃）
+        if (panel) {
+          if (panel.style.display === 'none' || !panel.style.display) {
+            await showFavoritesPanel();
+          } else {
+            hideFavoritesPanel();
+          }
         }
       });
     }
@@ -3195,13 +2664,7 @@ const initializeBar = async () => {
           // Update star button state
           await updateStarButtonState();
           
-          // If History panel is open, update it to show new star state
-          try {
-            const historyPanel = document.getElementById('historyPanel');
-            if (historyPanel && historyPanel.style.display !== 'none') {
-              await renderHistoryPanel();
-            }
-          } catch (_) {}
+          // History 面板已改为浮动子窗口，无需在此更新
         } catch (err) {
           console.error('Error toggling star:', err);
         }
@@ -3737,6 +3200,259 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onBrowserViewUrlChan
 
 initializeBar();
 
+// ---- History/Favorites 浮动面板 IPC 监听 ----
+if (IS_ELECTRON && window.electronAPI) {
+  // History 面板请求数据
+  window.electronAPI.onGetHistoryData?.(async () => {
+    try {
+      const list = await loadHistory();
+      const favList = await loadFavorites();
+      window.electronAPI.sendHistoryData?.({ history: list, favorites: favList });
+    } catch (_) {}
+  });
+  
+  // History 面板打开项目
+  window.electronAPI.onOpenHistoryItem?.(async ({ url, provider }) => {
+    try {
+      if (!url) return;
+      const container = document.getElementById('iframe');
+      const overrides = await getOverrides();
+      const customProviders = await loadCustomProviders();
+      const ALL = { ...PROVIDERS };
+      (customProviders || []).forEach((c) => { ALL[c.key] = c; });
+      
+      if (provider && ALL[provider]) {
+        await setProvider(provider);
+        const p = effectiveConfig(ALL, provider, overrides);
+        const openInTab = document.getElementById('openInTab');
+        if (openInTab) {
+          openInTab.dataset.url = url;
+          try { openInTab.title = url; } catch (_) {}
+        }
+        if (p.authCheck) {
+          const auth = await p.authCheck();
+          if (auth.state === 'authorized') {
+            await ensureFrame(container, provider, p);
+          } else {
+            renderMessage(container, auth.message || 'Please login.');
+          }
+        } else {
+          await ensureFrame(container, provider, p);
+        }
+        if (window.electronAPI?.switchProvider) {
+          window.electronAPI.switchProvider({ key: provider, url });
+        }
+        renderProviderTabs(provider);
+        await updateStarButtonState();
+      } else {
+        if (window.electronAPI?.switchProvider) {
+          const key = provider || 'web';
+          window.electronAPI.switchProvider({ key, url });
+          setActiveSide('left');
+        }
+      }
+    } catch (err) {
+      console.error('Error opening history item:', err);
+    }
+  });
+  
+  // Favorites 面板请求数据
+  window.electronAPI.onGetFavoritesData?.(async () => {
+    try {
+      const list = await loadFavorites();
+      window.electronAPI.sendFavoritesData?.({ favorites: list });
+    } catch (_) {}
+  });
+  
+  // Favorites 面板打开项目
+  window.electronAPI.onOpenFavoritesItem?.(async ({ url, provider }) => {
+    try {
+      if (!url) return;
+      const container = document.getElementById('iframe');
+      const overrides = await getOverrides();
+      const customProviders = await loadCustomProviders();
+      const ALL = { ...PROVIDERS };
+      (customProviders || []).forEach((c) => { ALL[c.key] = c; });
+      
+      if (provider && ALL[provider]) {
+        await setProvider(provider);
+        const p = effectiveConfig(ALL, provider, overrides);
+        const openInTab = document.getElementById('openInTab');
+        if (openInTab) {
+          openInTab.dataset.url = url;
+          try { openInTab.title = url; } catch (_) {}
+        }
+        if (p.authCheck) {
+          const auth = await p.authCheck();
+          if (auth.state === 'authorized') {
+            await ensureFrame(container, provider, p);
+          } else {
+            renderMessage(container, auth.message || 'Please login.');
+          }
+        } else {
+          await ensureFrame(container, provider, p);
+        }
+        if (window.electronAPI?.switchProvider) {
+          window.electronAPI.switchProvider({ key: provider, url });
+        }
+        renderProviderTabs(provider);
+        await updateStarButtonState();
+      } else {
+        if (window.electronAPI?.switchProvider) {
+          const key = provider || 'web';
+          window.electronAPI.switchProvider({ key, url });
+          setActiveSide('left');
+        }
+      }
+    } catch (err) {
+      console.error('Error opening favorites item:', err);
+    }
+  });
+  
+  // History 面板操作回调
+  window.electronAPI.onHistoryAction?.(async ({ action, data }) => {
+    try {
+      if (action === 'clear') {
+        await saveHistory([]);
+      } else if (action === 'star') {
+        const { url, provider, title } = data;
+        await addFavorite({ url, provider, title, needsTitle: true });
+      } else if (action === 'unstar') {
+        const { url } = data;
+        const favs = await loadFavorites();
+        await saveFavorites(favs.filter((x) => normalizeUrlForMatch(x.url) !== normalizeUrlForMatch(url)));
+      } else if (action === 'rename') {
+        const { url, title } = data;
+        const list = await loadHistory();
+        const idx = list.findIndex((x) => x.url === url);
+        if (idx >= 0 && title) {
+          list[idx] = { ...list[idx], title: clampTitle(title), needsTitle: false };
+          await saveHistory(list);
+        }
+      } else if (action === 'add-current') {
+        const href = await getCurrentDisplayedUrl();
+        const prov = (await getProvider()) || 'chatgpt';
+        if (href) {
+          const suggested = (currentTitleByProvider[prov] || document.title || '').trim();
+          await addHistory({ url: href, provider: prov, title: suggested, needsTitle: true });
+        }
+      }
+      // 刷新面板数据
+      const histList = await loadHistory();
+      const favList = await loadFavorites();
+      window.electronAPI.sendHistoryData?.({ history: histList, favorites: favList });
+    } catch (_) {}
+  });
+  
+  // Favorites 面板操作回调
+  window.electronAPI.onFavoritesAction?.(async ({ action, data }) => {
+    try {
+      if (action === 'clear') {
+        await saveFavorites([]);
+      } else if (action === 'remove') {
+        const { url } = data;
+        const list = await loadFavorites();
+        await saveFavorites(list.filter((x) => x.url !== url));
+      } else if (action === 'rename') {
+        const { url, title } = data;
+        const list = await loadFavorites();
+        const idx = list.findIndex((x) => x.url === url);
+        if (idx >= 0 && title) {
+          list[idx] = { ...list[idx], title: clampTitle(title) };
+          await saveFavorites(list);
+        }
+      } else if (action === 'add-current') {
+        const href = await getCurrentDisplayedUrl();
+        const prov = (await getProvider()) || 'chatgpt';
+        if (href) {
+          const suggested = (currentTitleByProvider[prov] || document.title || '').trim();
+          await addFavorite({ url: href, provider: prov, title: suggested, needsTitle: true });
+        }
+      }
+      // 刷新面板数据
+      const list = await loadFavorites();
+      window.electronAPI.sendFavoritesData?.({ favorites: list });
+    } catch (_) {}
+  });
+  
+  // History 导出/导入/清空
+  window.electronAPI.onExportHistory?.(async () => {
+    try { await exportHistory(); } catch (_) {}
+  });
+  window.electronAPI.onImportHistory?.(async () => {
+    try {
+      await importHistory();
+      const histList = await loadHistory();
+      const favList = await loadFavorites();
+      window.electronAPI.sendHistoryData?.({ history: histList, favorites: favList });
+    } catch (_) {}
+  });
+  window.electronAPI.onImportHistoryData?.(async (importedData) => {
+    try {
+      console.log('[Import] 收到导入数据:', importedData?.length || 0, '条');
+      if (!Array.isArray(importedData)) {
+        console.log('[Import] 数据不是数组');
+        return;
+      }
+      // 直接覆盖导入，不做去重
+      const merged = importedData.slice(0, 500);
+      await saveHistory(merged);
+      const histList = await loadHistory();
+      const favList = await loadFavorites();
+      window.electronAPI.sendHistoryData?.({ history: histList, favorites: favList });
+      alert(`已导入 ${merged.length} 条历史记录`);
+    } catch (err) {
+      console.error('导入历史失败:', err);
+      alert('导入失败：' + String(err));
+    }
+  });
+  window.electronAPI.onClearAllHistory?.(async () => {
+    try {
+      await saveHistory([]);
+      // 刷新面板
+      const histList = await loadHistory();
+      const favList = await loadFavorites();
+      window.electronAPI.sendHistoryData?.({ history: histList, favorites: favList });
+    } catch (_) {}
+  });
+  
+  // Favorites 导出/导入/清空
+  window.electronAPI.onExportFavorites?.(async () => {
+    try { await exportFavorites(); } catch (_) {}
+  });
+  window.electronAPI.onImportFavorites?.(async () => {
+    try {
+      await importFavorites();
+      // 刷新面板
+      const list = await loadFavorites();
+      window.electronAPI.sendFavoritesData?.({ favorites: list });
+    } catch (_) {}
+  });
+  window.electronAPI.onImportFavoritesData?.(async (importedData) => {
+    try {
+      console.log('[Import] 收到收藏导入数据:', importedData?.length || 0, '条');
+      if (!Array.isArray(importedData)) return;
+      // 直接覆盖导入
+      const merged = importedData.slice(0, 500);
+      await saveFavorites(merged);
+      const list = await loadFavorites();
+      window.electronAPI.sendFavoritesData?.({ favorites: list });
+      alert(`已导入 ${merged.length} 条收藏`);
+    } catch (err) {
+      console.error('导入收藏失败:', err);
+      alert('导入失败：' + String(err));
+    }
+  });
+  window.electronAPI.onClearAllFavorites?.(async () => {
+    try {
+      await saveFavorites([]);
+      // 刷新面板
+      const list = await loadFavorites();
+      window.electronAPI.sendFavoritesData?.({ favorites: list });
+    } catch (_) {}
+  });
+}
+
 // Tab 键切换：监听主进程的切换请求
 if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
   window.electronAPI.onCycleProvider((data) => {
@@ -4055,233 +3771,12 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
 })();
 
 // ============== 搜索功能 ==============
-(function initializeSearch() {
-  const searchBar = document.getElementById('searchBar');
-  const searchInput = document.getElementById('searchInput');
-  const searchPrev = document.getElementById('searchPrev');
-  const searchNext = document.getElementById('searchNext');
-  const searchClose = document.getElementById('searchClose');
-  const searchCount = document.getElementById('searchCount');
+// ============== 搜索功能（现在使用浮动子窗口，由主进程管理）==============
+(function initializeSearchBtn() {
   const searchBtn = document.getElementById('searchBtn');
-
-  let isSearchVisible = false;
-  let currentSearchTerm = '';
-
-  // 顶部预留逻辑移除：采用 overlay 模式，不再推挤 BrowserView
-
-  // 切换搜索框显示/隐藏
-  function toggleSearch() {
-    isSearchVisible = !isSearchVisible;
-    
-    if (isSearchVisible) {
-      searchBar.style.display = 'block';
-      searchInput.focus();
-      searchInput.select();
-      try { if (IS_ELECTRON && window.electronAPI?.enterOverlay) window.electronAPI.enterOverlay(); } catch(_){}
-      
-      // 高亮搜索按钮
-      if (searchBtn) {
-        searchBtn.classList.add('active');
-      }
-      
-      // 如果有之前的搜索词，重新搜索
-      if (searchInput.value) {
-        performSearch(searchInput.value);
-      }
-    } else {
-      searchBar.style.display = 'none';
-      clearSearch();
-      try { if (IS_ELECTRON && window.electronAPI?.exitOverlay) window.electronAPI.exitOverlay(); } catch(_){}
-      
-      // 取消高亮搜索按钮
-      if (searchBtn) {
-        searchBtn.classList.remove('active');
-      }
-    }
-  }
-
-  // 执行搜索
-  function performSearch(term, direction = '') {
-    if (!term) {
-      clearSearch();
-      return;
-    }
-
-    currentSearchTerm = term;
-
-    try {
-      // 获取当前激活的iframe
-      const iframeContainer = document.getElementById('iframe');
-      const activeFrame = iframeContainer?.querySelector('[data-provider]:not([style*="display: none"])');
-      
-      if (activeFrame) {
-        // 通过postMessage向iframe发送搜索请求
-        try {
-          activeFrame.contentWindow.postMessage({
-            type: 'AI_SIDEBAR_SEARCH',
-            action: direction === 'prev' ? 'findPrevious' : 'findNext',
-            term: term
-          }, '*');
-          
-          // 设置搜索状态
-          searchCount.textContent = '搜索中...';
-          searchInput.style.backgroundColor = '';
-          
-          // 如果3秒内没有响应，显示降级方案
-          setTimeout(() => {
-            if (searchCount.textContent === '搜索中...') {
-              tryNativeSearch(activeFrame, term, direction);
-            }
-          }, 500);
-        } catch (e) {
-          console.log('postMessage失败，尝试原生搜索:', e);
-          tryNativeSearch(activeFrame, term, direction);
-        }
-      }
-    } catch (e) {
-      console.error('搜索出错:', e);
-      searchCount.textContent = '搜索失败';
-    }
-  }
   
-  // 尝试使用原生window.find
-  function tryNativeSearch(frame, term, direction) {
-    try {
-      const iframeWindow = frame.contentWindow;
-      
-      if (iframeWindow && iframeWindow.find) {
-        // 使用window.find API
-        const found = iframeWindow.find(
-          term,
-          false, // caseSensitive
-          direction === 'prev', // backwards
-          true, // wrapAround
-          false, // wholeWord
-          false, // searchInFrames
-          false  // showDialog
-        );
-        
-        if (found) {
-          searchCount.textContent = '已找到';
-          searchInput.style.backgroundColor = '';
-        } else {
-          searchCount.textContent = '未找到';
-          searchInput.style.backgroundColor = '#fff3cd';
-        }
-      } else {
-        // 无法使用window.find，显示提示
-        searchCount.textContent = '请使用 Cmd/Ctrl+F';
-      }
-    } catch (e) {
-      console.log('原生搜索失败:', e);
-      searchCount.textContent = '请使用 Cmd/Ctrl+F';
-    }
-  }
-  
-  // 监听来自iframe的搜索结果
-  window.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'AI_SIDEBAR_SEARCH_RESULT') {
-      const { found, total, current } = event.data;
-      
-      if (found) {
-        if (total > 0) {
-          searchCount.textContent = `${current}/${total}`;
-        } else {
-          searchCount.textContent = '已找到';
-        }
-        searchInput.style.backgroundColor = '';
-      } else {
-        searchCount.textContent = '未找到';
-        searchInput.style.backgroundColor = '#fff3cd';
-      }
-    }
-  });
-
-
-  // 清除搜索
-  function clearSearch() {
-    currentSearchTerm = '';
-    searchCount.textContent = '';
-    searchInput.style.backgroundColor = '';
-    
-    try {
-      const iframeContainer = document.getElementById('iframe');
-      const activeFrame = iframeContainer?.querySelector('[data-provider]:not([style*="display: none"])');
-      
-      if (activeFrame && activeFrame.contentWindow) {
-        // 向iframe发送清除搜索的消息
-        try {
-          activeFrame.contentWindow.postMessage({
-            type: 'AI_SIDEBAR_SEARCH',
-            action: 'clear',
-            term: ''
-          }, '*');
-        } catch (_) {}
-        
-        // 尝试清除选择
-        try {
-          const selection = activeFrame.contentWindow.getSelection();
-          if (selection) {
-            selection.removeAllRanges();
-          }
-        } catch (_) {}
-      }
-    } catch (e) {
-      // 忽略跨域错误
-    }
-  }
-
-  // 仅监听 ESC 关闭搜索（Tab 切换由全局处理，且支持 BrowserView 捕获）
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && isSearchVisible) {
-      toggleSearch();
-    }
-  });
-
-  // 搜索输入框事件
-  searchInput.addEventListener('input', (e) => {
-    const term = e.target.value;
-    if (term) {
-      performSearch(term);
-    } else {
-      clearSearch();
-    }
-  });
-
-  // Enter键搜索下一个
-  searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey) {
-        performSearch(searchInput.value, 'prev');
-      } else {
-        performSearch(searchInput.value, 'next');
-      }
-    }
-  });
-
-  // 上一个按钮
-  searchPrev.addEventListener('click', () => {
-    if (searchInput.value) {
-      performSearch(searchInput.value, 'prev');
-    }
-  });
-
-  // 下一个按钮
-  searchNext.addEventListener('click', () => {
-    if (searchInput.value) {
-      performSearch(searchInput.value, 'next');
-    }
-  });
-
-  // 关闭按钮
-  searchClose.addEventListener('click', () => {
-    toggleSearch();
-  });
-
-  // 工具栏搜索按钮 - 改为聚焦地址栏
+  // 工具栏搜索按钮 - 聚焦地址栏
   if (searchBtn) {
-    // 设置初始快捷键提示
     getButtonShortcuts().then(shortcuts => {
       const sc = shortcuts.searchBtn;
       const keys = [];
@@ -4293,22 +3788,16 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
     });
     
     searchBtn.addEventListener('click', () => {
-      // 任何点击搜索都视为要操作右侧
       setActiveSide('right');
-      // 聚焦到地址栏
       const addressInput = document.getElementById('addressInput');
       const addressBar = document.getElementById('addressBar');
       
       if (addressBar && addressInput) {
-        // 如果地址栏未显示，先显示它（需要先打开内嵌浏览器）
         if (addressBar.style.display === 'none') {
-          // 如果没有打开内嵌浏览器，提示用户或打开一个默认页面
           if (IS_ELECTRON && window.electronAPI) {
-            // 可以打开一个默认的搜索页面（标准 Google 搜索）
             const defaultUrl = 'https://www.google.com';
             window.electronAPI.openEmbeddedBrowser(defaultUrl);
             setActiveSide('right');
-            // 等待地址栏显示后聚焦
             setTimeout(() => {
               if (addressInput) {
                 addressInput.focus();
@@ -4317,18 +3806,14 @@ if (IS_ELECTRON && window.electronAPI && window.electronAPI.onCycleProvider) {
             }, 300);
           }
         } else {
-          // 地址栏已显示，直接聚焦
           addressInput.focus();
           addressInput.select();
         }
-      } else {
-        // 如果地址栏不存在，回退到原来的搜索功能
-        toggleSearch();
       }
     });
   }
 
-  dbg('搜索功能已初始化');
+  dbg('搜索按钮已初始化');
 })();
 
 // ============== 与插件目录的文件同步（导入 + 监听） ==============

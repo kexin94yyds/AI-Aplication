@@ -253,6 +253,11 @@ let isInsertingText = false; // 标记是否正在插入文本，防止窗口位
 let windowPositionLock = false; // 窗口位置锁定标志，防止在特定操作时位置被改变
 // 截图是否启用“多屏同步插入”模式（由渲染层 Align 按钮控制）
 let alignScreenshotMode = false;
+// 搜索栏子窗口（类似 Chrome 的浮动搜索框）
+let searchBarWindow = null;
+// History/Favorites 浮动面板子窗口
+let historyPanelWindow = null;
+let favoritesPanelWindow = null;
 
 // 统一获取“当前可注入的 AI 视图”
 // 逻辑：优先最近聚焦的视图；分屏时若右侧有焦点则返回右侧，否则返回左侧；
@@ -552,9 +557,26 @@ const PROVIDERS = {
   ima: { url: 'https://ima.qq.com', partition: 'persist:ima' },
   mubu: { url: 'https://mubu.com/app/edit/home/5zT4WuoDoc0', partition: 'persist:mubu' },
   excalidraw: { url: 'https://excalidraw.com', partition: 'persist:excalidraw' },
-  attention_local: { url: `file://${path.join(__dirname, 'vendor/attention/index.html')}`, partition: 'persist:attention' },
+  attention: { url: 'https://attention-span-tracker.netlify.app/', partition: 'persist:attention' },
   'v0': { url: 'https://v0.app/chat', partition: 'persist:v0' }
 };
+
+// 根据 URL 查找匹配的 provider partition（用于右侧浏览器复用登录）
+function getPartitionForUrl(url) {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    for (const [key, provider] of Object.entries(PROVIDERS)) {
+      try {
+        const providerUrl = new URL(provider.url);
+        if (u.hostname === providerUrl.hostname || u.hostname.endsWith('.' + providerUrl.hostname)) {
+          return provider.partition;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return null;
+}
 
 // 创建主窗口
 function createWindow() {
@@ -836,6 +858,17 @@ function getOrCreateBrowserView(providerKey) {
     // 链接拦截主要通过 will-navigate 事件处理，这里不需要注入脚本
   });
 
+  // 页面内搜索结果回调
+  view.webContents.on('found-in-page', (event, result) => {
+    try {
+      mainWindow?.webContents.send('find-in-page-result', {
+        activeMatchOrdinal: result.activeMatchOrdinal,
+        matches: result.matches,
+        finalUpdate: result.finalUpdate
+      });
+    } catch (_) {}
+  });
+
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error(`BrowserView failed to load ${providerKey}:`, errorCode, errorDescription);
   });
@@ -865,7 +898,8 @@ function getOrCreateBrowserView(providerKey) {
       if (navUrl.origin !== currentUrl.origin) {
         event.preventDefault();
         console.log('[Link Interceptor] External link detected, opening in embedded browser:', navigationUrl);
-        openEmbeddedBrowser(navigationUrl);
+        const matchedPartition = getPartitionForUrl(navigationUrl);
+        openEmbeddedBrowser(navigationUrl, matchedPartition ? { partition: matchedPartition } : {});
       }
       // 同域名的导航允许继续（内部链接）
     } catch (e) {
@@ -878,7 +912,8 @@ function getOrCreateBrowserView(providerKey) {
   view.webContents.setWindowOpenHandler(({ url }) => {
     if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
       // 打开内嵌浏览器而不是新窗口
-      openEmbeddedBrowser(url);
+      const matchedPartition = getPartitionForUrl(url);
+      openEmbeddedBrowser(url, matchedPartition ? { partition: matchedPartition } : {});
       return { action: 'deny' };
     }
     return { action: 'allow' };
@@ -899,7 +934,13 @@ function getOrCreateBrowserView(providerKey) {
               cycleToNextProvider(dir, 'left');
               return;
             }
-            // 2) 拦截刷新：仅刷新当前这个 BrowserView，避免主窗口被刷新导致分割线消失
+            // 2) 拦截 Cmd+F / Ctrl+F：打开搜索栏（使用浮动子窗口）
+            if ((input.key === 'f' || input.key === 'F') && (input.meta || input.control) && !input.shift && !input.alt) {
+              event.preventDefault();
+              try { toggleSearchBar(); } catch (_) {}
+              return;
+            }
+            // 3) 拦截刷新：仅刷新当前这个 BrowserView，避免主窗口被刷新导致分割线消失
             const isReloadKey = (
               ((input.key === 'r' || input.key === 'R') && (input.meta || input.control)) ||
               (input.key === 'F5')
@@ -1808,7 +1849,8 @@ ipcMain.on('open-embedded-browser', (event, url) => {
     console.error('[Embedded Browser] Invalid URL:', url);
     return;
   }
-  openEmbeddedBrowser(url);
+  const matchedPartition = getPartitionForUrl(url);
+  openEmbeddedBrowser(url, matchedPartition ? { partition: matchedPartition } : {});
 });
 
 // IPC 处理器：关闭内嵌浏览器
@@ -1823,7 +1865,8 @@ ipcMain.on('open-embedded-browser-from-view', (event, url) => {
     return;
   }
   console.log('[Embedded Browser] Opening from BrowserView:', url);
-  openEmbeddedBrowser(url);
+  const matchedPartition = getPartitionForUrl(url);
+  openEmbeddedBrowser(url, matchedPartition ? { partition: matchedPartition } : {});
 });
 
 ipcMain.on('get-current-url', (event) => {
@@ -2978,6 +3021,458 @@ ipcMain.on('close-window', () => {
     app.quit();
   } catch (e) {
     console.error('退出应用失败:', e);
+  }
+});
+
+// ============== 搜索栏子窗口（类似 Chrome 的浮动搜索框）==============
+function showSearchBar() {
+  if (!mainWindow) return;
+  
+  // 如果已存在，直接显示并聚焦
+  if (searchBarWindow && !searchBarWindow.isDestroyed()) {
+    searchBarWindow.show();
+    searchBarWindow.webContents.send('search-bar-focus');
+    return;
+  }
+  
+  // 获取主窗口位置和大小
+  const [winX, winY] = mainWindow.getPosition();
+  const [winW] = mainWindow.getSize();
+  
+  // 搜索栏尺寸
+  const barWidth = 340;
+  const barHeight = 44;
+  const margin = 12;
+  
+  // 计算位置：主窗口右上角
+  const x = winX + winW - barWidth - margin - sidebarWidthPx;
+  const y = winY + topInset + margin;
+  
+  searchBarWindow = new BrowserWindow({
+    width: barWidth,
+    height: barHeight,
+    x: x,
+    y: y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    parent: mainWindow,
+    show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+  
+  searchBarWindow.loadFile('search-bar.html');
+  
+  searchBarWindow.once('ready-to-show', () => {
+    searchBarWindow.show();
+  });
+  
+  // 监听主窗口移动/调整大小，更新搜索栏位置
+  const updatePosition = () => {
+    if (!searchBarWindow || searchBarWindow.isDestroyed() || !mainWindow) return;
+    try {
+      const [wx, wy] = mainWindow.getPosition();
+      const [ww] = mainWindow.getSize();
+      searchBarWindow.setPosition(
+        wx + ww - barWidth - margin - sidebarWidthPx,
+        wy + topInset + margin
+      );
+    } catch (_) {}
+  };
+  
+  mainWindow.on('move', updatePosition);
+  mainWindow.on('resize', updatePosition);
+  
+  // 监听搜索结果
+  const view = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+  if (view && view.webContents) {
+    view.webContents.on('found-in-page', (event, result) => {
+      if (searchBarWindow && !searchBarWindow.isDestroyed()) {
+        searchBarWindow.webContents.send('search-bar-result', result);
+      }
+    });
+  }
+  
+  searchBarWindow.on('closed', () => {
+    searchBarWindow = null;
+    // 清除搜索高亮
+    try {
+      const v = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+      if (v && v.webContents) v.webContents.stopFindInPage('clearSelection');
+    } catch (_) {}
+  });
+}
+
+function hideSearchBar() {
+  if (searchBarWindow && !searchBarWindow.isDestroyed()) {
+    searchBarWindow.close();
+    searchBarWindow = null;
+  }
+  // 清除搜索高亮
+  try {
+    const view = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+    if (view && view.webContents) view.webContents.stopFindInPage('clearSelection');
+  } catch (_) {}
+}
+
+function toggleSearchBar() {
+  if (searchBarWindow && !searchBarWindow.isDestroyed() && searchBarWindow.isVisible()) {
+    hideSearchBar();
+  } else {
+    showSearchBar();
+  }
+}
+
+// ============== Favorites 面板子窗口 ==============
+function showFavoritesPanel() {
+  if (!mainWindow) return;
+  
+  // 如果已存在，直接显示并聚焦
+  if (favoritesPanelWindow && !favoritesPanelWindow.isDestroyed()) {
+    favoritesPanelWindow.show();
+    favoritesPanelWindow.webContents.send('favorites-panel-focus');
+    return;
+  }
+  
+  // 获取主窗口位置和大小
+  const [winX, winY] = mainWindow.getPosition();
+  const [winW] = mainWindow.getSize();
+  
+  // 面板尺寸
+  const panelWidth = 500;
+  const panelHeight = 500;
+  
+  // 计算位置：主窗口顶部居中
+  const x = winX + Math.floor((winW - panelWidth) / 2);
+  const y = winY + topInset + 10;
+  
+  favoritesPanelWindow = new BrowserWindow({
+    width: panelWidth,
+    height: panelHeight,
+    x: x,
+    y: y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    parent: mainWindow,
+    show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+  
+  favoritesPanelWindow.loadFile('favorites-panel.html');
+  
+  favoritesPanelWindow.once('ready-to-show', () => {
+    favoritesPanelWindow.show();
+    // 请求数据
+    favoritesPanelWindow.webContents.send('favorites-panel-focus');
+    mainWindow?.webContents.send('get-favorites-data');
+  });
+  
+  // 监听主窗口移动/调整大小，更新面板位置
+  const updatePosition = () => {
+    if (!favoritesPanelWindow || favoritesPanelWindow.isDestroyed() || !mainWindow) return;
+    try {
+      const [wx, wy] = mainWindow.getPosition();
+      const [ww] = mainWindow.getSize();
+      favoritesPanelWindow.setPosition(
+        wx + Math.floor((ww - panelWidth) / 2),
+        wy + topInset + 10
+      );
+    } catch (_) {}
+  };
+  
+  mainWindow.on('move', updatePosition);
+  mainWindow.on('resize', updatePosition);
+  
+  favoritesPanelWindow.on('closed', () => {
+    favoritesPanelWindow = null;
+  });
+}
+
+function hideFavoritesPanel() {
+  if (favoritesPanelWindow && !favoritesPanelWindow.isDestroyed()) {
+    favoritesPanelWindow.close();
+    favoritesPanelWindow = null;
+  }
+}
+
+function toggleFavoritesPanel() {
+  if (favoritesPanelWindow && !favoritesPanelWindow.isDestroyed() && favoritesPanelWindow.isVisible()) {
+    hideFavoritesPanel();
+  } else {
+    showFavoritesPanel();
+  }
+}
+
+// ============== History 面板子窗口 ==============
+function showHistoryPanel() {
+  if (!mainWindow) return;
+  
+  // 如果已存在，直接显示并聚焦
+  if (historyPanelWindow && !historyPanelWindow.isDestroyed()) {
+    historyPanelWindow.show();
+    historyPanelWindow.webContents.send('history-panel-focus');
+    return;
+  }
+  
+  // 获取主窗口位置和大小
+  const [winX, winY] = mainWindow.getPosition();
+  const [winW] = mainWindow.getSize();
+  
+  // 面板尺寸
+  const panelWidth = 500;
+  const panelHeight = 500;
+  
+  // 计算位置：主窗口顶部居中
+  const x = Math.round(winX + (winW - panelWidth) / 2);
+  const y = winY + topInset + 10;
+  
+  historyPanelWindow = new BrowserWindow({
+    width: panelWidth,
+    height: panelHeight,
+    x: x,
+    y: y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    parent: mainWindow,
+    show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+  
+  historyPanelWindow.loadFile('history-panel.html');
+  
+  historyPanelWindow.once('ready-to-show', () => {
+    historyPanelWindow.show();
+    // 请求主窗口发送历史数据
+    mainWindow?.webContents.send('get-history-data');
+  });
+  
+  // 监听主窗口移动/调整大小，更新面板位置
+  const updatePosition = () => {
+    if (!historyPanelWindow || historyPanelWindow.isDestroyed() || !mainWindow) return;
+    try {
+      const [wx, wy] = mainWindow.getPosition();
+      const [ww] = mainWindow.getSize();
+      historyPanelWindow.setPosition(
+        Math.round(wx + (ww - panelWidth) / 2),
+        wy + topInset + 10
+      );
+    } catch (_) {}
+  };
+  
+  mainWindow.on('move', updatePosition);
+  mainWindow.on('resize', updatePosition);
+  
+  historyPanelWindow.on('closed', () => {
+    historyPanelWindow = null;
+  });
+}
+
+function hideHistoryPanel() {
+  if (historyPanelWindow && !historyPanelWindow.isDestroyed()) {
+    historyPanelWindow.close();
+    historyPanelWindow = null;
+  }
+}
+
+function toggleHistoryPanel() {
+  if (historyPanelWindow && !historyPanelWindow.isDestroyed() && historyPanelWindow.isVisible()) {
+    hideHistoryPanel();
+  } else {
+    showHistoryPanel();
+  }
+}
+
+// 搜索栏 IPC 处理
+ipcMain.on('search-bar-find', (event, { text, direction }) => {
+  try {
+    if (!text) return;
+    const view = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+    if (view && view.webContents) {
+      const options = {
+        forward: direction !== 'prev',
+        findNext: direction === 'next' || direction === 'prev'
+      };
+      view.webContents.findInPage(text, options);
+    }
+  } catch (e) {
+    console.error('search-bar-find error:', e);
+  }
+});
+
+ipcMain.on('search-bar-stop', () => {
+  try {
+    const view = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+    if (view && view.webContents) {
+      view.webContents.stopFindInPage('clearSelection');
+    }
+  } catch (_) {}
+});
+
+ipcMain.on('search-bar-close', () => {
+  hideSearchBar();
+});
+
+// ============== History 面板 IPC 处理 ==============
+ipcMain.on('toggle-history-panel', () => toggleHistoryPanel());
+ipcMain.on('history-panel-close', () => hideHistoryPanel());
+ipcMain.on('history-panel-load', (event) => {
+  // 转发给主窗口获取数据
+  mainWindow?.webContents.send('get-history-data');
+});
+ipcMain.on('history-panel-get-data', (event) => {
+  // 转发给主窗口获取数据
+  mainWindow?.webContents.send('get-history-data');
+});
+ipcMain.on('history-panel-data', (event, data) => {
+  // 从主窗口收到数据，转发给面板
+  historyPanelWindow?.webContents.send('history-panel-data', data);
+});
+ipcMain.on('history-panel-open', (event, { url, provider }) => {
+  // 转发给主窗口打开历史项
+  mainWindow?.webContents.send('open-history-item', { url, provider });
+  hideHistoryPanel();
+});
+ipcMain.on('history-panel-delete', (event, { url }) => {
+  // 转发给主窗口删除历史项
+  mainWindow?.webContents.send('delete-history-item', { url });
+});
+ipcMain.on('history-panel-rename', (event, { url, newTitle }) => {
+  // 转发给主窗口重命名历史项
+  mainWindow?.webContents.send('rename-history-item', { url, newTitle });
+});
+ipcMain.on('history-panel-star', (event, { url }) => {
+  // 转发给主窗口收藏历史项
+  mainWindow?.webContents.send('star-history-item', { url });
+});
+ipcMain.on('history-panel-copy', (event, { url }) => {
+  // 复制 URL 到剪贴板
+  try {
+    clipboard.writeText(url);
+  } catch (_) {}
+});
+ipcMain.on('history-panel-add-current', () => {
+  // 转发给主窗口添加当前页面到历史
+  mainWindow?.webContents.send('add-current-to-history');
+});
+ipcMain.on('history-panel-clear-all', () => {
+  // 转发给主窗口清空历史
+  mainWindow?.webContents.send('clear-all-history');
+});
+ipcMain.on('history-panel-export', (event, data) => {
+  mainWindow?.webContents.send('export-history', data);
+});
+ipcMain.on('history-panel-import', (event, data) => {
+  mainWindow?.webContents.send('import-history', data);
+});
+ipcMain.on('history-panel-import-data', (event, importedData) => {
+  mainWindow?.webContents.send('import-history-data', importedData);
+});
+
+// ============== Favorites 面板 IPC 处理 ==============
+ipcMain.on('toggle-favorites-panel', () => toggleFavoritesPanel());
+ipcMain.on('favorites-panel-close', () => hideFavoritesPanel());
+ipcMain.on('favorites-panel-load', (event) => {
+  // 转发给主窗口获取收藏数据
+  mainWindow?.webContents.send('get-favorites-data');
+});
+ipcMain.on('favorites-panel-data', (event, data) => {
+  // 从主窗口收到数据，转发给面板
+  favoritesPanelWindow?.webContents.send('favorites-data', data);
+});
+ipcMain.on('favorites-panel-open', (event, { url, provider }) => {
+  // 转发给主窗口打开收藏项
+  mainWindow?.webContents.send('open-favorites-item', { url, provider });
+  hideFavoritesPanel();
+});
+ipcMain.on('favorites-panel-delete', (event, { url }) => {
+  // 转发给主窗口删除收藏项
+  mainWindow?.webContents.send('delete-favorites-item', { url });
+});
+ipcMain.on('favorites-panel-rename', (event, { url, newTitle }) => {
+  // 转发给主窗口重命名收藏项
+  mainWindow?.webContents.send('rename-favorites-item', { url, newTitle });
+});
+ipcMain.on('favorites-panel-copy', (event, { url }) => {
+  // 复制 URL 到剪贴板
+  try {
+    const { clipboard } = require('electron');
+    clipboard.writeText(url);
+  } catch (_) {}
+});
+ipcMain.on('favorites-panel-export', () => {
+  mainWindow?.webContents.send('export-favorites');
+});
+ipcMain.on('favorites-panel-import', () => {
+  mainWindow?.webContents.send('import-favorites');
+});
+ipcMain.on('favorites-panel-import-data', (event, importedData) => {
+  // 面板直接发送导入数据，转发给主窗口处理
+  mainWindow?.webContents.send('import-favorites-data', importedData);
+});
+ipcMain.on('favorites-panel-clear-all', () => {
+  mainWindow?.webContents.send('clear-all-favorites');
+});
+ipcMain.on('favorites-panel-get-data', () => {
+  mainWindow?.webContents.send('get-favorites-data');
+});
+
+// 页面内搜索 (Cmd+F) - 使用 BrowserView 的 findInPage API（保留旧 API 兼容）
+ipcMain.on('find-in-page', (event, { text, options = {} }) => {
+  try {
+    if (!text) return;
+    const view = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+    if (view && view.webContents) {
+      const findOptions = {
+        forward: options.forward !== false,
+        findNext: options.findNext || false,
+        matchCase: options.matchCase || false
+      };
+      view.webContents.findInPage(text, findOptions);
+    }
+  } catch (e) {
+    console.error('findInPage error:', e);
+  }
+});
+
+ipcMain.on('stop-find-in-page', () => {
+  try {
+    const view = currentBrowserView || embeddedBrowserView || thirdBrowserView;
+    if (view && view.webContents) {
+      view.webContents.stopFindInPage('clearSelection');
+    }
+  } catch (e) {
+    console.error('stopFindInPage error:', e);
+  }
+});
+
+// 聚焦渲染窗口（从 BrowserView 转移焦点到搜索框）
+ipcMain.on('focus-renderer', () => {
+  try {
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.focus();
+    }
+  } catch (e) {
+    console.error('focus-renderer error:', e);
   }
 });
 

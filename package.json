@@ -23,6 +23,9 @@
     "productName": "AI Sidebar",
     "files": [
       "index.html",
+      "search-bar.html",
+      "history-panel.html",
+      "favorites-panel.html",
       "electron-main.js",
       "electron-preload.js",
       "electron-adapter.js",
