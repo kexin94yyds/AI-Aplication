@@ -21,41 +21,63 @@
       flex-direction: column;
       overflow: hidden;
     }
-    .panel-header {
+    /* 顶部工具栏 - 与 History 保持一致 */
+    .toolbar {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid #eee;
-      background: #fafafa;
+      gap: 6px;
+      padding: 10px 12px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e0e0e0;
+      flex-shrink: 0;
     }
-    .panel-title {
-      font-size: 15px;
-      font-weight: 600;
+    .toolbar-btn {
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
       color: #333;
+      transition: all 0.15s;
     }
-    .header-buttons {
-      display: flex;
-      gap: 8px;
+    .toolbar-btn:hover {
+      background: #f0f0f0;
+      border-color: #999;
     }
-    .header-btn {
-      padding: 6px 12px;
+    .toolbar-btn:active {
+      background: #e0e0e0;
+    }
+    .toolbar-btn.primary {
+      background: #333;
+      color: #fff;
+      border-color: #333;
+    }
+    .toolbar-btn.primary:hover {
+      background: #555;
+    }
+    .toolbar-spacer {
+      flex: 1;
+    }
+    .close-btn {
+      width: 28px;
+      height: 28px;
       border: none;
       background: transparent;
       cursor: pointer;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #555;
+      border-radius: 4px;
       display: flex;
       align-items: center;
-      gap: 4px;
+      justify-content: center;
+      color: #666;
     }
-    .header-btn:hover {
-      background: #f0f0f0;
+    .close-btn:hover {
+      background: #e0e0e0;
+      color: #333;
     }
-    .header-btn.close-btn:hover {
-      background: #ffebee;
-      color: #d32f2f;
+    .close-btn svg {
+      width: 16px;
+      height: 16px;
     }
     .search-box {
       padding: 10px 16px;
@@ -103,14 +125,14 @@
       text-transform: uppercase;
       flex-shrink: 0;
     }
-    .provider-chatgpt { background: #10a37f20; color: #10a37f; }
-    .provider-claude { background: #8b5cf620; color: #8b5cf6; }
-    .provider-gemini { background: #4285f420; color: #4285f4; }
-    .provider-grok { background: #1da1f220; color: #1da1f2; }
-    .provider-deepseek { background: #ff6b3520; color: #ff6b35; }
-    .provider-poe { background: #6366f120; color: #6366f1; }
-    .provider-perplexity { background: #22c55e20; color: #22c55e; }
-    .provider-default { background: #9ca3af20; color: #9ca3af; }
+    .provider-chatgpt { background: #333; color: #fff; }
+    .provider-claude { background: #333; color: #fff; }
+    .provider-gemini { background: #333; color: #fff; }
+    .provider-grok { background: #333; color: #fff; }
+    .provider-deepseek { background: #333; color: #fff; }
+    .provider-poe { background: #333; color: #fff; }
+    .provider-perplexity { background: #333; color: #fff; }
+    .provider-default { background: #666; color: #fff; }
     .item-title {
       flex: 1;
       font-size: 13px;
@@ -168,20 +190,19 @@
 </head>
 <body>
   <div class="panel-container">
-    <div class="panel-header">
-      <span class="panel-title">⭐ 收藏夹</span>
-      <div class="header-buttons">
-        <button class="header-btn" id="exportBtn" title="导出收藏">导出</button>
-        <button class="header-btn" id="importBtn" title="导入收藏">导入</button>
-        <button class="header-btn" id="clearAllBtn" title="清空所有" style="color:#d32f2f;">Clear All</button>
-        <button class="header-btn close-btn" id="closeBtn" title="关闭 (Esc)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-          关闭
-        </button>
-      </div>
+    <!-- 顶部工具栏 - 与 History 保持一致 -->
+    <div class="toolbar">
+      <button class="toolbar-btn primary" id="addCurrentBtn" title="添加当前页面">+ Add Current</button>
+      <button class="toolbar-btn" id="clearAllBtn" title="清空所有收藏" style="color:#d32f2f;">Clear All</button>
+      <div class="toolbar-spacer"></div>
+      <button class="toolbar-btn" id="exportBtn" title="导出收藏">导出</button>
+      <button class="toolbar-btn" id="importBtn" title="导入收藏">导入</button>
+      <button class="close-btn" id="closeBtn" title="关闭 (Esc)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
     <div class="search-box">
       <input type="text" class="search-input" id="searchInput" placeholder="搜索收藏..." autofocus>
@@ -207,6 +228,7 @@
     const exportBtn = document.getElementById('exportBtn');
     const importBtn = document.getElementById('importBtn');
     const clearAllBtn = document.getElementById('clearAllBtn');
+    const addCurrentBtn = document.getElementById('addCurrentBtn');
 
     let favoritesData = [];
 
@@ -303,19 +325,19 @@
           e.stopPropagation();
           const newTitle = prompt('输入新名称:', item.title || '');
           if (newTitle !== null && newTitle !== item.title) {
-            ipcRenderer.send('favorites-panel-rename', { index, newTitle });
+            ipcRenderer.send('favorites-panel-rename', { url: item.url, newTitle });
           }
         });
 
         div.querySelector('.delete-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           if (confirm('确定要删除这个收藏吗？')) {
-            ipcRenderer.send('favorites-panel-delete', { index });
+            ipcRenderer.send('favorites-panel-delete', { url: item.url });
           }
         });
 
         listContainer.appendChild(div);
-      });
+      });　　
     }
 
     // 搜索过滤
@@ -338,6 +360,11 @@
 
     // 关闭按钮
     closeBtn.addEventListener('click', () => ipcRenderer.send('favorites-panel-close'));
+
+    // 添加当前页面按钮
+    addCurrentBtn.addEventListener('click', () => {
+      ipcRenderer.send('favorites-panel-add-current');
+    });
 
     // 导出按钮 - 直接在面板中导出
     exportBtn.addEventListener('click', () => {

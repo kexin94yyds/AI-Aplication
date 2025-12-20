@@ -132,13 +132,6 @@ const PROVIDERS = {
     iframeUrl: 'https://ima.qq.com/',
     authCheck: null
   },
-  attention: {
-    label: 'Attention Tracker',
-    icon: 'images/时间管道.JPG',
-    baseUrl: 'https://attention-span-tracker.netlify.app',
-    iframeUrl: 'https://attention-span-tracker.netlify.app/',
-    authCheck: null
-  },
   mubu: {
     label: '幕布',
     icon: 'images/providers/mubu.png',

@@ -190,4 +190,58 @@ if (window.electronAPI) {
   
   console.log('截屏功能已初始化！');
   console.log('- 按 Cmd+Shift+K (Mac) 或 Ctrl+Shift+K (Windows) 截屏');
+  
+  // ============== 收藏同步功能 ==============
+  // 监听从 history-panel 发来的收藏请求
+  window.electronAPI.onStarHistoryItem?.((data) => {
+    console.log('[Electron Adapter] 收到收藏请求:', data);
+    if (data && data.url) {
+      // 调用 popup.js 中的 addFavorite 函数
+      if (typeof window.addFavorite === 'function') {
+        window.addFavorite({
+          url: data.url,
+          title: data.title || '',
+          provider: data.provider || 'Unknown'
+        }).then(() => {
+          showToast('已添加到收藏', 'info');
+          // 刷新历史面板
+          window.electronAPI?.refreshHistoryPanel?.();
+        }).catch((e) => {
+          console.error('添加收藏失败:', e);
+          showToast('添加收藏失败', 'error');
+        });
+      }
+    }
+  });
+  
+  // 监听删除历史记录请求
+  window.electronAPI.onDeleteHistoryItem?.((data) => {
+    console.log('[Electron Adapter] 收到删除历史请求:', data);
+    if (data && data.url && typeof window.HistoryDB?.removeByUrl === 'function') {
+      window.HistoryDB.removeByUrl(data.url).then(() => {
+        showToast('已删除', 'info');
+        window.electronAPI?.refreshHistoryPanel?.();
+      }).catch((e) => {
+        console.error('删除历史失败:', e);
+      });
+    }
+  });
+  
+  // 监听删除收藏请求
+  window.electronAPI.onDeleteFavoritesItem?.((data) => {
+    console.log('[Electron Adapter] 收到删除收藏请求:', data);
+    if (data && data.url) {
+      (async () => {
+        try {
+          const list = await window.loadFavorites?.() || [];
+          const filtered = list.filter(f => f && f.url !== data.url);
+          await window.saveFavorites?.(filtered);
+          showToast('已删除收藏', 'info');
+          window.electronAPI?.refreshFavoritesPanel?.();
+        } catch (e) {
+          console.error('删除收藏失败:', e);
+        }
+      })();
+    }
+  });
 }

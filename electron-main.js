@@ -3199,6 +3199,11 @@ function showFavoritesPanel() {
   favoritesPanelWindow.on('closed', () => {
     favoritesPanelWindow = null;
   });
+  
+  // 失去焦点时自动关闭
+  favoritesPanelWindow.on('blur', () => {
+    hideFavoritesPanel();
+  });
 }
 
 function hideFavoritesPanel() {
@@ -3285,6 +3290,11 @@ function showHistoryPanel() {
   historyPanelWindow.on('closed', () => {
     historyPanelWindow = null;
   });
+  
+  // 失去焦点时自动关闭
+  historyPanelWindow.on('blur', () => {
+    hideHistoryPanel();
+  });
 }
 
 function hideHistoryPanel() {
@@ -3360,9 +3370,13 @@ ipcMain.on('history-panel-rename', (event, { url, newTitle }) => {
   // 转发给主窗口重命名历史项
   mainWindow?.webContents.send('rename-history-item', { url, newTitle });
 });
-ipcMain.on('history-panel-star', (event, { url }) => {
-  // 转发给主窗口收藏历史项
-  mainWindow?.webContents.send('star-history-item', { url });
+ipcMain.on('history-panel-star', (event, item) => {
+  // 转发给主窗口收藏历史项（包含完整数据）
+  mainWindow?.webContents.send('star-history-item', item);
+});
+ipcMain.on('refresh-history-panel', () => {
+  // 刷新历史面板
+  historyPanelWindow?.webContents.send('history-panel-refresh');
 });
 ipcMain.on('history-panel-copy', (event, { url }) => {
   // 复制 URL 到剪贴板
@@ -3431,6 +3445,9 @@ ipcMain.on('favorites-panel-import-data', (event, importedData) => {
 });
 ipcMain.on('favorites-panel-clear-all', () => {
   mainWindow?.webContents.send('clear-all-favorites');
+});
+ipcMain.on('favorites-panel-add-current', () => {
+  mainWindow?.webContents.send('add-current-to-favorites');
 });
 ipcMain.on('favorites-panel-get-data', () => {
   mainWindow?.webContents.send('get-favorites-data');

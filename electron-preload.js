@@ -420,6 +420,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onClearAllHistory: (cb) => {
     ipcRenderer.on('clear-all-history', () => { try { cb(); } catch (_) {} });
   },
+  onStarHistoryItem: (cb) => {
+    ipcRenderer.on('star-history-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  onDeleteHistoryItem: (cb) => {
+    ipcRenderer.on('delete-history-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  onRenameHistoryItem: (cb) => {
+    ipcRenderer.on('rename-history-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  refreshHistoryPanel: () => {
+    try { ipcRenderer.send('refresh-history-panel'); } catch (_) {}
+  },
 
   // ============== Favorites 面板 ==============
   toggleFavoritesPanel: () => {
@@ -445,6 +457,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onClearAllFavorites: (cb) => {
     ipcRenderer.on('clear-all-favorites', () => { try { cb(); } catch (_) {} });
+  },
+  onDeleteFavoritesItem: (cb) => {
+    ipcRenderer.on('delete-favorites-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  onRenameFavoritesItem: (cb) => {
+    ipcRenderer.on('rename-favorites-item', (e, d) => { try { cb(d); } catch (_) {} });
+  },
+  refreshFavoritesPanel: () => {
+    try { ipcRenderer.send('favorites-panel-get-data'); } catch (_) {}
   }
 });
 
