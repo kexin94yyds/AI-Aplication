@@ -146,11 +146,81 @@ const PROVIDERS = {
     iframeUrl: 'https://excalidraw.com/',
     authCheck: null // Excalidraw 无需登录
   },
+  attention: {
+    label: 'Attention',
+    icon: 'images/providers/attention.png',
+    baseUrl: 'https://attention-span-tracker.netlify.app',
+    iframeUrl: 'https://attention-span-tracker.netlify.app/',
+    authCheck: null
+  },
+  kimi: {
+    label: 'Kimi',
+    icon: 'images/providers/kimi.png',
+    baseUrl: 'https://kimi.moonshot.cn',
+    iframeUrl: 'https://kimi.moonshot.cn/',
+    authCheck: null
+  },
   'v0': {
     label: 'v0',
     icon: 'images/providers/v0.svg',
-    baseUrl: 'https://v0.app',
-    iframeUrl: 'https://v0.app/chat',
+    baseUrl: 'https://v0.dev',
+    iframeUrl: 'https://v0.dev/chat',
+    authCheck: null
+  },
+  tobooks: {
+    label: 'ToBooks',
+    icon: 'images/favicon.png',
+    baseUrl: 'https://tobooks.netlify.app/tobooks-main/',
+    iframeUrl: 'https://tobooks.netlify.app/tobooks-main/',
+    authCheck: null
+  },
+  copilot: {
+    label: 'GitHub Copilot',
+    icon: 'images/providers/copilot.png',
+    baseUrl: 'https://github.com/copilot',
+    iframeUrl: 'https://github.com/copilot',
+    authCheck: null
+  },
+  mistral: {
+    label: 'Mistral',
+    icon: 'images/providers/mistral.png',
+    baseUrl: 'https://chat.mistral.ai',
+    iframeUrl: 'https://chat.mistral.ai/',
+    authCheck: null
+  },
+  cohere: {
+    label: 'Cohere',
+    icon: 'images/providers/cohere.png',
+    baseUrl: 'https://coral.cohere.com',
+    iframeUrl: 'https://coral.cohere.com/',
+    authCheck: null
+  },
+  huggingface: {
+    label: 'HuggingChat',
+    icon: 'images/providers/huggingface.png',
+    baseUrl: 'https://huggingface.co',
+    iframeUrl: 'https://huggingface.co/chat/',
+    authCheck: null
+  },
+  metaai: {
+    label: 'Meta AI',
+    icon: 'images/providers/metaai.png',
+    baseUrl: 'https://www.meta.ai',
+    iframeUrl: 'https://www.meta.ai/',
+    authCheck: null
+  },
+  zhipu: {
+    label: '智谱清言',
+    icon: 'images/providers/zhipu.png',
+    baseUrl: 'https://chatglm.cn',
+    iframeUrl: 'https://chatglm.cn/',
+    authCheck: null
+  },
+  minimax: {
+    label: '海螺AI',
+    icon: 'images/providers/minimax.png',
+    baseUrl: 'https://hailuoai.com',
+    iframeUrl: 'https://hailuoai.com/',
     authCheck: null
   }
 };

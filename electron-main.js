@@ -558,7 +558,16 @@ const PROVIDERS = {
   mubu: { url: 'https://mubu.com/app/edit/home/5zT4WuoDoc0', partition: 'persist:mubu' },
   excalidraw: { url: 'https://excalidraw.com', partition: 'persist:excalidraw' },
   attention: { url: 'https://attention-span-tracker.netlify.app/', partition: 'persist:attention' },
-  'v0': { url: 'https://v0.app/chat', partition: 'persist:v0' }
+  kimi: { url: 'https://kimi.moonshot.cn', partition: 'persist:kimi' },
+  'v0': { url: 'https://v0.dev/chat', partition: 'persist:v0' },
+  tobooks: { url: 'https://tobooks.netlify.app/tobooks-main/', partition: 'persist:tobooks' },
+  copilot: { url: 'https://github.com/copilot', partition: 'persist:copilot' },
+  mistral: { url: 'https://chat.mistral.ai', partition: 'persist:mistral' },
+  cohere: { url: 'https://coral.cohere.com', partition: 'persist:cohere' },
+  huggingface: { url: 'https://huggingface.co/chat/', partition: 'persist:huggingface' },
+  metaai: { url: 'https://www.meta.ai', partition: 'persist:metaai' },
+  zhipu: { url: 'https://chatglm.cn', partition: 'persist:zhipu' },
+  minimax: { url: 'https://hailuoai.com', partition: 'persist:minimax' }
 };
 
 // 根据 URL 查找匹配的 provider partition（用于右侧浏览器复用登录）
@@ -1834,6 +1843,20 @@ function closeEmbeddedBrowser() {
     }
 
     previousBrowserView = null;
+
+    // 刷新左侧视图以同步登录状态（如果右侧和左侧使用相同的 partition）
+    try {
+      if (currentBrowserView && currentBrowserView.webContents) {
+        const currentUrl = currentBrowserView.webContents.getURL();
+        // 检查是否需要刷新（只在有效 URL 时刷新）
+        if (currentUrl && currentUrl.startsWith('http')) {
+          console.log('[Embedded Browser] Refreshing left view to sync login state');
+          currentBrowserView.webContents.reload();
+        }
+      }
+    } catch (e) {
+      console.warn('[Embedded Browser] Error refreshing left view:', e);
+    }
 
     // 通知渲染进程
     mainWindow?.webContents.send('embedded-browser-closed');
