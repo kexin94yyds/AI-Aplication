@@ -87,7 +87,7 @@ export default function App() {
           <div className="flex justify-between h-16 items-center">
             <div className="flex items-center gap-3">
               <img src="/logo.png" alt="AI Sidebar" className="w-7 h-7" />
-              <span className="text-lg font-bold tracking-tight">AI全家桶</span>
+              <span className="text-lg font-bold tracking-tight">AI Sidebar</span>
             </div>
             
             <div className="hidden md:flex items-center gap-10">
