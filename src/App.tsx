@@ -27,14 +27,10 @@ const APP_DOWNLOAD_URL = '#'; // TODO: Replace with actual App download URL
 const GITHUB_URL = 'https://github.com/ymx94yyds/ai-sidebar';
 
 const providers = [
-  { name: 'ChatGPT', type: 'OpenAI官方', icon: '/providers/chatgpt.png' },
-  { name: 'Claude', type: 'Anthropic最强', icon: '/providers/claude.png' },
-  { name: 'Gemini', type: 'Google多模态', icon: '/providers/gemini.png' },
-  { name: 'DeepSeek', type: '国产开源', icon: '/providers/deepseek.png' },
-  { name: 'Grok', type: 'X实时AI', icon: '/providers/grok.png' },
-  { name: 'Perplexity', type: 'AI搜索', icon: '/providers/perplexity.png' },
-  { name: '通义千问', type: '阿里AI', icon: '/providers/tongyi.png' },
-  { name: '豆包', type: '字节AI', icon: '/providers/doubao.png' },
+  { name: 'iterate', type: 'AI对话', icon: '/providers/iterate.png' },
+  { name: 'relearn', type: '知识管理', icon: '/providers/relearn.png' },
+  { name: 'tobooks', type: '图书工具', icon: '/providers/tobooks.png' },
+  { name: 'gemini-voyager', type: '浏览器扩展', icon: '/providers/gemini-voyager.png' },
 ];
 
 const features = [
