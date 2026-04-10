@@ -109,6 +109,13 @@ export default function App() {
     window.history.replaceState({}, '', nextPath);
   }, [modalContent]);
 
+  useEffect(() => {
+    document.body.style.overflow = modalContent ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [modalContent]);
+
   return (
     <div className="min-h-screen bg-white text-black font-sans selection:bg-black selection:text-white">
       {/* Navigation */}
@@ -169,15 +176,16 @@ export default function App() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-40 pb-24 px-6">
+      <section className="px-6 pt-32 pb-24 md:pt-36">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col items-center text-center max-w-5xl mx-auto">
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.6 }}
+              className="flex flex-col items-center"
             >
-              <div className="flex items-center gap-2 mb-8">
+              <div className="mb-8 flex items-center justify-center gap-2">
                 <div className="h-[1px] w-8 bg-black"></div>
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/40">Browser Productivity</span>
               </div>
@@ -185,11 +193,11 @@ export default function App() {
                 One Sidebar <br />
                 <span className="text-black/20">for Every AI Workflow</span>
               </h1>
-              <p className="text-lg text-black/60 max-w-xl mb-12 leading-relaxed">
+              <p className="mx-auto mb-12 max-w-xl text-lg leading-relaxed text-black/60">
                 Use ChatGPT, Claude, Gemini, DeepSeek, and 11+ leading AI tools in one place. Skip tab switching, cycle with the Tab key, and turn your browser into a focused workstation.
               </p>
               
-              <div className="flex flex-col sm:flex-row items-start gap-4">
+              <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
                 <a href={CHROME_STORE_URL} target="_blank" rel="noopener noreferrer" className="bg-white text-black border border-black/20 px-10 py-5 rounded font-bold text-sm uppercase tracking-widest hover:bg-black hover:text-white transition-all flex items-center gap-3 no-underline">
                   <Chrome size={18} />
                   Add to Chrome
@@ -531,17 +539,18 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 px-4"
+            className="fixed inset-0 z-[100] overflow-y-auto bg-black/70"
             onClick={() => setModalContent(null)}
           >
+            <div className="min-h-full px-4 py-6 sm:px-6 sm:py-10">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-md border border-black/10 bg-white p-6 text-black shadow-2xl max-h-[80vh] overflow-y-auto relative"
+              initial={{ scale: 0.98, opacity: 0, y: 24 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.98, opacity: 0, y: 24 }}
+              className="relative mx-auto w-full max-w-3xl rounded-[28px] border border-black/10 bg-white p-6 text-black shadow-2xl sm:p-8"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="mb-6 flex items-center justify-between">
+              <div className="mb-8 flex items-center justify-between gap-4 border-b border-black/10 pb-5">
                 <h3 className="text-lg font-bold tracking-tight">
                   {modalContent === 'developer' && 'Developer'}
                   {modalContent === 'privacy' && 'Privacy Policy'}
@@ -633,6 +642,7 @@ export default function App() {
               )}
               </div>
             </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
