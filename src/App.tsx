@@ -597,15 +597,23 @@ export default function App() {
                     <p className="text-xs text-zinc-400 mb-3">Last updated: April 11, 2026</p>
                     <div className="space-y-2 border-b border-black/10 pb-4">
                       <p className="font-medium text-black">Data We Process</p>
-                      <p>AI Sidebar processes data locally in the user's browser to provide the side panel experience. This may include settings and preferences, saved history and favorites, authentication state derived from cookies on supported services, selected text or screenshots that the user intentionally sends to the sidebar, and conversation content that the user chooses to save or export.</p>
+                      <p>AI Sidebar primarily processes data locally in the user's browser. This may include settings and preferences, saved history and favorites, saved or exported conversation content, authentication state and supported cookies on supported services, current page context needed for supported helpers, and user-triggered content such as selected text, HTML snippets, and screenshots.</p>
                     </div>
                     <div className="space-y-2 border-b border-black/10 pb-4">
-                      <p className="font-medium text-black">Third-Party Services</p>
-                      <p>When users open or interact with third-party AI services such as ChatGPT, Claude, Gemini, and other supported providers, user inputs and related content are sent directly from the user's browser to those third-party services and are governed by those services' own terms and privacy policies.</p>
+                      <p className="font-medium text-black">How We Use Data</p>
+                      <p>This data is used only to provide user-facing features such as the Chrome side panel, supported page helpers, provider switching, saved history and favorites, user-triggered send-selection or screenshot actions, and saved or exported conversation workflows.</p>
+                    </div>
+                    <div className="space-y-2 border-b border-black/10 pb-4">
+                      <p className="font-medium text-black">Sharing and Transfers</p>
+                      <p>We do not sell user data and core extension functionality does not send user data to developer-operated remote servers. When users open or interact with third-party AI services such as ChatGPT, Claude, Gemini, and other supported providers, user inputs and related content are sent directly from the user's browser to those third-party services under their own terms and privacy policies. If an optional local sync service is running on the user's device at <code>http://localhost:3456</code>, history and favorites may be synced to that local service.</p>
+                    </div>
+                    <div className="space-y-2 border-b border-black/10 pb-4">
+                      <p className="font-medium text-black">Storage and User Controls</p>
+                      <p>Most extension data is stored locally in the browser using Chrome storage APIs or IndexedDB until the user clears it, deletes saved items, or removes the extension. Users can stop using any supported provider at any time and can avoid local sync by not running the local sync service.</p>
                     </div>
                     <div className="space-y-2">
-                      <p className="font-medium text-black">Storage and Security</p>
-                      <p>Most extension data is stored locally in the browser. We do not sell user data or send core extension data to our own remote servers. If optional local sync features are enabled, history or favorites may be transferred to a local service running on the user's device.</p>
+                      <p className="font-medium text-black">Chrome Web Store Limited Use</p>
+                      <p>AI Sidebar uses data from Chrome permissions that can access personal or sensitive user data only to provide the extension&apos;s single purpose and user-facing features. We do not use or transfer this data for advertising, credit decisions, or unrelated purposes.</p>
                     </div>
                 </>
               )}
